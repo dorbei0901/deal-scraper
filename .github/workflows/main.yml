@@ -27,7 +27,7 @@ jobs:
           # add: pip install requests beautifulsoup4
 
       - name: Run Scraper and Post to Social Media
-        # env:
+         env:
           # Securely store your keys in GitHub Settings > Secrets
            AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
           FACEBOOK_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
