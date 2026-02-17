@@ -1,4 +1,4 @@
-BeautifulSoup
+beautifulsoup4
 undetected_chromedriver
 By
 WebDriverWait
