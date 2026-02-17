@@ -29,7 +29,7 @@ jobs:
       - name: Run Scraper and Post to Social Media
         # env:
           # Securely store your keys in GitHub Settings > Secrets
-          # AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
-          # FACEBOOK_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
-          # IG_USER_ID: ${{ secrets.IG_USER_ID }}
-        run: python your_scraper_script.py
+           AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
+          FACEBOOK_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
+           IG_USER_ID: ${{ secrets.IG_USER_ID }}
+        run: python Affiliate_latest.py
