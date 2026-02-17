@@ -1,7 +1,6 @@
 beautifulsoup4
-undetected_chromedriver
-By
-WebDriverWait
+undetected-chromedriver
+selenium
 expected_conditions
 NoSuchElementException
 TimeoutException
