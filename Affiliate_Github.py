@@ -30,7 +30,9 @@ def build_search_url(keyword: str) -> str:
         params["k"] = "lego"
 
     query = "&".join(f"{key}={value}" for key, value in params.items())
-    url = f"{base_url}?{query}"
+    #url = f"{base_url}?{query}"
+    
+    url = "https://www.amazon.ca/s?i=toys-and-games&rh=p_89:LEGO"
     return url
 
 def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_original_price=""):
