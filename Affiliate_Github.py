@@ -1,9 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[1]:
-
-
 import time
 import re
 import undetected_chromedriver as uc
@@ -39,7 +33,7 @@ def build_search_url(keyword: str) -> str:
     url = f"{base_url}?{query}"
     return url
 
-def scrape_amazon_lego_selenium(keyword="", min_discount_percent=10):
+def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_original_price=""):
     options = uc.ChromeOptions()
     options.add_argument("--headless=new") # Keep headless for efficiency, set to false for debugging
     options.add_argument("--no-sandbox")
@@ -48,7 +42,8 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=10):
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
-    driver = uc.Chrome(options=options)
+    #driver = uc.Chrome(options=options)
+    driver = uc.Chrome(options=options, version_main=144)
     all_discounted_products = []
     page_number = 1
     max_retries = 3 # For initial page load if "Something went wrong"
@@ -192,7 +187,7 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=10):
                         discount = round(((original_price - current_price) / original_price) * 100, 1)
 
                     if title != "N/A" and link != "N/A" and "slredirect.amazon.ca" not in link and "N/A" not in title:
-                        if discount >= min_discount_percent:
+                        if discount >= min_discount_percent and original_price >= min_original_price:
                             all_discounted_products.append({
                                 "title": title,
                                 "current_price": current_price,
@@ -252,21 +247,15 @@ def main():
     #keyword = input("Enter search keyword (e.g., 'Star Wars', 'Technic', leave blank for all LEGO products): ").strip()
     keyword = ''
     #min_discount_input = input("Enter minimum discount percentage (default 30): ").strip()
-    min_discount_input = 30
-    try:
-        min_discount_percent = int(min_discount_input) if min_discount_input else 30
-    except ValueError:
-        print("Invalid discount input. Using default 30%.")
-        min_discount_percent = 30
+    min_discount_percent = 25
+    min_original_price = 50
+    #try:
+    #    min_discount_percent = int(min_discount_input) if min_discount_input else 30
+    #except ValueError:
+    #    print("Invalid discount input. Using default 30%.")
+    #    min_discount_percent = 30
 
-    scrape_amazon_lego_selenium(keyword, min_discount_percent)
+    scrape_amazon_lego_selenium(keyword, min_discount_percent, min_original_price)
 
 if __name__ == "__main__":
     main()
-
-
-# In[ ]:
-
-
-
-
