@@ -15,21 +15,19 @@ def extract_price(text):
 
 def build_search_url(keyword: str) -> str:
     """
-    Build the Amazon.ca search URL for LEGO products filtered by brand,
-    optionally with a keyword to narrow down.
+    Build the Amazon.ca search URL for LEGO products.
+    Simplified and properly URL-encoded to avoid Amazon's routing errors.
     """
     base_url = "https://www.amazon.ca/s"
-    params = {
-        "i": "toys-and-games",
-        "rh": "p_89:LEGO", # Filters by LEGO brand
-    }
+    
     if keyword:
+        # Replace spaces with '+' for the URL
         kw_encoded = keyword.strip().replace(' ', '+')
-        params["k"] = f"lego+{kw_encoded}"
+        # %3A is the URL-encoded version of a colon (:)
+        query = f"k=lego+{kw_encoded}&rh=p_89%3ALEGO"
     else:
-        params["k"] = "lego"
-
-    query = "&".join(f"{key}={value}" for key, value in params.items())
+        query = "k=lego&rh=p_89%3ALEGO"
+        
     url = f"{base_url}?{query}"
     return url
 
