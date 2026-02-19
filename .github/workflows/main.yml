@@ -27,4 +27,4 @@ jobs:
         env:
           AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
           FB_ACCESS_TOKEN: ${{ secrets.FB_ACCESS_TOKEN }}
-        run: python Affiliate_latest.py
+        run: python Affiliate_Github.py
