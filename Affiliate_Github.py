@@ -30,35 +30,42 @@ def build_search_url(keyword: str) -> str:
         params["k"] = "lego"
 
     query = "&".join(f"{key}={value}" for key, value in params.items())
-    #url = f"{base_url}?{query}"
-    
-    url = "https://www.amazon.ca/s?i=toys-and-games&rh=p_89:LEGO"
+    url = f"{base_url}?{query}"
     return url
 
 def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_original_price=""):
     options = uc.ChromeOptions()
-    options.add_argument("--headless=new") # Keep headless for efficiency, set to false for debugging
+    options.add_argument("--headless=new") 
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
-    #driver = uc.Chrome(options=options)
     driver = uc.Chrome(options=options, version_main=144)
     all_discounted_products = []
     page_number = 1
-    max_retries = 3 # For initial page load if "Something went wrong"
+    max_retries = 3 
 
     try:
         url = build_search_url(keyword)
-        print(f"🔍 Starting search at URL: {url}")
+        print("🍪 Warming up session cookies to bypass WAF...")
+        
+        # --- NEW: Warm-up Phase ---
+        driver.get("https://www.amazon.ca")
+        time.sleep(6) # Let the homepage load fully
+        
+        # Simulate human behavior by scrolling slightly
+        driver.execute_script("window.scrollBy(0, 700);")
+        time.sleep(3)
+        
+        print(f"🔍 Now navigating to target URL: {url}")
 
-        # --- NEW: Initial Page Load with Retry Logic ---
+        # --- Initial Page Load with Retry Logic ---
         initial_load_successful = False
         for attempt in range(max_retries):
             driver.get(url)
-            time.sleep(5) # Increased initial sleep to allow page to settle
+            time.sleep(6) # Increased wait for the actual search page
 
             # Handle initial cookie banner (common on first load)
             try:
@@ -68,15 +75,13 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_origina
                 print(f"✅ Accepted initial cookies (Attempt {attempt + 1}).")
                 time.sleep(2)
             except (TimeoutException, NoSuchElementException):
-                pass # No cookie banner or already accepted
+                pass 
 
             # Check if the "Something went wrong" page is displayed
-            # Look for a common element on a successful search page, OR a known element on the error page
-            # Example for error page check (might need adjustment if Amazon changes it):
-            if "Something went wrong" in driver.page_source or "Sorry!" in driver.title:
-                print(f"⚠️ 'Something went wrong' page detected on attempt {attempt + 1}. Refreshing...")
-                driver.refresh() # Use driver.refresh() to simulate F5
-                time.sleep(5) # Wait for refresh
+            if "Something went wrong" in driver.page_source or "Sorry!" in driver.title or "captcha" in driver.current_url.lower():
+                print(f"⚠️ 'Something went wrong' or CAPTCHA detected on attempt {attempt + 1}. Refreshing...")
+                driver.refresh() 
+                time.sleep(7) 
             else:
                 # Try to detect if product results are present
                 try:
@@ -85,23 +90,21 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_origina
                     )
                     print(f"✅ Initial product results detected on attempt {attempt + 1}.")
                     initial_load_successful = True
-                    break # Exit retry loop, page loaded correctly
+                    break 
                 except TimeoutException:
                     print(f"❌ Products not detected on initial load attempt {attempt + 1}. Retrying...")
-                    # No specific error page, but products didn't load, so try refreshing
                     driver.refresh()
-                    time.sleep(5)
+                    time.sleep(6)
 
         if not initial_load_successful:
             print(f"❌ Failed to load initial search results after {max_retries} attempts. Aborting.")
-            return [] # Return empty list if initial load fails
-        # --- END Initial Page Load with Retry Logic ---
+            return [] 
+        # --- END Initial Page Load ---
 
-
+        # --- Scraping Loop ---
         while True:
             print(f"\n--- Scraping Page {page_number} ---")
 
-            # --- Handle cos-banner or other intervening forms (can appear on any page) ---
             try:
                 banner_accept_button = WebDriverWait(driver, 5).until(
                     EC.element_to_be_clickable((By.CSS_SELECTOR, '#cos-banner [name="accept"]'))
@@ -110,19 +113,16 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_origina
                 print("✅ Accepted 'cos-banner' (likely a privacy consent form).")
                 time.sleep(2)
             except (TimeoutException, NoSuchElementException):
-                pass # Banner not found or not clickable
+                pass 
 
-            # Scroll down to load products (this helps with lazy loading on some pages)
             for _ in range(3):
                 driver.execute_script("window.scrollBy(0, 1500);")
                 time.sleep(1.5)
 
-            # Re-confirm product results are visible after scroll/any banners
             try:
-                WebDriverWait(driver, 10).until( # Reduced wait time here as page is already loaded
+                WebDriverWait(driver, 10).until( 
                     EC.visibility_of_element_located((By.CSS_SELECTOR, "div[data-component-type='s-search-result']"))
                 )
-                # print(f"✅ Product results confirmed on page {page_number}.") # Too chatty
             except TimeoutException:
                 print(f"❌ Products lost or not visible on page {page_number} after scroll. Ending scrape for this path.")
                 break
@@ -144,13 +144,12 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_origina
                 discount = 0.0
 
                 try:
-                    # --- Title and Link Extraction using your proven approach with a fallback ---
                     link_tag = item.find("a", class_="a-link-normal s-line-clamp-4 s-link-style a-text-normal")
                     if link_tag:
                         title_tag = link_tag.find("h2")
                         title = title_tag.get_text(strip=True) if title_tag else "N/A"
                         link = "https://www.amazon.ca" + link_tag.get("href", "N/A")
-                    else: # Fallback for slightly different link tag (e.g. sponsored or layout variation)
+                    else: 
                         title_h2 = item.find("h2")
                         if title_h2:
                             link_tag_fallback = title_h2.find("a", class_="a-link-normal")
@@ -199,11 +198,8 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_origina
                             })
 
                 except Exception as e:
-                    # print(f"Error processing individual item (Page {page_number}): {e}")
-                    # print(f"Problematic item HTML snippet: {item.prettify()[:500]}...")
                     continue
 
-            # Check for the next page button
             next_button = None
             try:
                 next_button = WebDriverWait(driver, 5).until(
@@ -246,16 +242,9 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_origina
 
 def main():
     print("🔎 Amazon LEGO Discount Scraper (All Pages)")
-    #keyword = input("Enter search keyword (e.g., 'Star Wars', 'Technic', leave blank for all LEGO products): ").strip()
     keyword = ''
-    #min_discount_input = input("Enter minimum discount percentage (default 30): ").strip()
     min_discount_percent = 25
     min_original_price = 50
-    #try:
-    #    min_discount_percent = int(min_discount_input) if min_discount_input else 30
-    #except ValueError:
-    #    print("Invalid discount input. Using default 30%.")
-    #    min_discount_percent = 30
 
     scrape_amazon_lego_selenium(keyword, min_discount_percent, min_original_price)
 
