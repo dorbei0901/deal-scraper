@@ -33,40 +33,35 @@ def build_search_url(keyword: str) -> str:
     url = f"{base_url}?{query}"
     return url
 
-# AMENDMENT 1: Function to load the product types from your text file
 def load_lego_themes(filename="legoproduct.txt"):
     """Reads the lego product types from a text file. Returns a list."""
     if not os.path.exists(filename):
         print(f"⚠️ {filename} not found in the repository. Defaulting to general LEGO search.")
-        return [""] # Returns a blank string to trigger a general search
+        return [""] 
     
     with open(filename, "r", encoding="utf-8") as file:
         themes = [line.strip() for line in file if line.strip()]
     
-    print(f"📁 Loaded {len(themes)} product types from {filename}: {', '.join(themes)}")
     return themes if themes else [""]
 
 def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_original_price=50.0):
     options = uc.ChromeOptions()
-    options.add_argument("--headless=new") # Essential for GitHub Actions
+    options.add_argument("--headless=new") 
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    # Using a standard modern user-agent
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 
-    # Force version 144 to match GitHub Actions Ubuntu runner
     driver = uc.Chrome(options=options, version_main=144)
     all_discounted_products = []
     page_number = 1
-    max_retries = 10 
+    max_retries = 5 
 
     try:
         url = build_search_url(keyword)
         print("🍪 Warming up session cookies to bypass WAF...")
         
-        # --- Warm-up Phase ---
         driver.get("https://www.amazon.ca")
         time.sleep(6) 
         driver.execute_script("window.scrollBy(0, 700);")
@@ -74,23 +69,19 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
         
         print(f"🔍 Now navigating to target URL: {url}")
 
-        # --- Initial Page Load with Retry Logic ---
         initial_load_successful = False
         for attempt in range(max_retries):
             driver.get(url)
             time.sleep(6) 
 
-            # Handle initial cookie banner
             try:
                 WebDriverWait(driver, 5).until(
                     EC.element_to_be_clickable((By.ID, "sp-cc-accept"))
                 ).click()
-                print(f"✅ Accepted initial cookies (Attempt {attempt + 1}).")
                 time.sleep(2)
             except (TimeoutException, NoSuchElementException):
                 pass 
 
-            # Check for bot detection pages
             if "Something went wrong" in driver.page_source or "Sorry!" in driver.title or "captcha" in driver.current_url.lower():
                 print(f"⚠️ Bot detection triggered on attempt {attempt + 1}. Refreshing...")
                 driver.refresh() 
@@ -100,7 +91,6 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                     WebDriverWait(driver, 10).until(
                         EC.visibility_of_element_located((By.CSS_SELECTOR, "div[data-component-type='s-search-result']"))
                     )
-                    print(f"✅ Initial product results detected on attempt {attempt + 1}.")
                     initial_load_successful = True
                     break 
                 except TimeoutException:
@@ -111,17 +101,14 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
         if not initial_load_successful:
             print(f"❌ Failed to load search results after {max_retries} attempts. Amazon is blocking the GitHub IP.")
             return [] 
-        # --- END Initial Page Load ---
 
         while True:
-            print(f"\n--- Scraping Page {page_number} ---")
-
+            # Silenced page-by-page prints for cleaner output
             try:
                 banner_accept_button = WebDriverWait(driver, 5).until(
                     EC.element_to_be_clickable((By.CSS_SELECTOR, '#cos-banner [name="accept"]'))
                 )
                 banner_accept_button.click()
-                print("✅ Accepted 'cos-banner'.")
                 time.sleep(2)
             except (TimeoutException, NoSuchElementException):
                 pass 
@@ -135,17 +122,13 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                     EC.visibility_of_element_located((By.CSS_SELECTOR, "div[data-component-type='s-search-result']"))
                 )
             except TimeoutException:
-                print(f"❌ Products lost on page {page_number}. Ending scrape for this path.")
                 break
 
             soup = BeautifulSoup(driver.page_source, "lxml")
             products = soup.find_all("div", {"data-component-type": "s-search-result"})
 
             if not products:
-                print(f"No product containers found in HTML on page {page_number}. Ending scrape.")
                 break
-
-            print(f"✅ Found {len(products)} potential search results on page {page_number}.")
 
             for item in products:
                 title = "N/A"
@@ -206,7 +189,6 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                                 "original_price": original_price,
                                 "discount": discount,
                                 "link": link,
-                                # AMENDMENT 3: Store the product type (keyword) for printing
                                 "theme": keyword if keyword else "General LEGO" 
                             })
 
@@ -222,12 +204,10 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                 pass
 
             if next_button and 's-pagination-disabled' not in next_button.get_attribute('class'):
-                print(f"Clicking 'Next' button to go to page {page_number + 1}...")
                 next_button.click()
                 page_number += 1
                 time.sleep(4)
             else:
-                print("No more pages or 'Next' button disabled. Ending pagination.")
                 break
 
         print(f"\n--- Scrape Complete for {keyword if keyword else 'All LEGO'} ---")
@@ -237,7 +217,6 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
 
         for idx, prod in enumerate(all_discounted_products, 1):
             print(f"\n[{idx}] {prod['title']}")
-            # AMENDMENT 3: Print the product type before the current price
             print(f"    🧱 Product Type: {prod['theme']}") 
             print(f"    💰 Current: ${prod['current_price'] if prod['current_price'] is not None else 'N/A'}")
             print(f"    🏷️ Original: ${prod['original_price'] if prod['original_price'] is not None else 'N/A'}")
@@ -250,16 +229,13 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
     finally:
         if driver:
             driver.quit()
-            print("Browser closed.")
 
 def main():
     print("🔎 Amazon LEGO Discount Scraper (GitHub Actions Edition)")
     
-    # AMENDMENT 2: Change default discount rate to 30%
     min_discount_percent = 25 
     min_original_price = 50
 
-    # AMENDMENT 1: Load from text file and loop through each product type
     themes = load_lego_themes()
     
     for theme in themes:
@@ -272,7 +248,6 @@ def main():
                                     min_discount_percent=min_discount_percent, 
                                     min_original_price=min_original_price)
         
-        # Adding a small buffer between different theme searches to avoid hitting Amazon too fast
         time.sleep(5) 
 
 if __name__ == "__main__":
