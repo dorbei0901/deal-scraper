@@ -256,7 +256,7 @@ def main():
     print("🔎 Amazon LEGO Discount Scraper (GitHub Actions Edition)")
     
     # AMENDMENT 2: Change default discount rate to 30%
-    min_discount_percent = 30 
+    min_discount_percent = 25 
     min_original_price = 50
 
     # AMENDMENT 1: Load from text file and loop through each product type
