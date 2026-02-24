@@ -2,7 +2,8 @@ name: Hourly Lego Deal Check
 
 on:
   schedule:
-    - cron: '0 * * * *'
+# Changed from 0 to 17 to bypass GitHub's top-of-the-hour traffic jam
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 jobs:
