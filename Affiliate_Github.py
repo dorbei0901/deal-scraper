@@ -3,6 +3,7 @@
 
 import time
 import re
+import os
 import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
 from selenium.webdriver.common.by import By
@@ -32,7 +33,20 @@ def build_search_url(keyword: str) -> str:
     url = f"{base_url}?{query}"
     return url
 
-def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_original_price=""):
+# AMENDMENT 1: Function to load the product types from your text file
+def load_lego_themes(filename="legoproduct.txt"):
+    """Reads the lego product types from a text file. Returns a list."""
+    if not os.path.exists(filename):
+        print(f"⚠️ {filename} not found in the repository. Defaulting to general LEGO search.")
+        return [""] # Returns a blank string to trigger a general search
+    
+    with open(filename, "r", encoding="utf-8") as file:
+        themes = [line.strip() for line in file if line.strip()]
+    
+    print(f"📁 Loaded {len(themes)} product types from {filename}: {', '.join(themes)}")
+    return themes if themes else [""]
+
+def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_original_price=50.0):
     options = uc.ChromeOptions()
     options.add_argument("--headless=new") # Essential for GitHub Actions
     options.add_argument("--no-sandbox")
@@ -52,7 +66,7 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_origina
         url = build_search_url(keyword)
         print("🍪 Warming up session cookies to bypass WAF...")
         
-        # --- NEW: Warm-up Phase ---
+        # --- Warm-up Phase ---
         driver.get("https://www.amazon.ca")
         time.sleep(6) 
         driver.execute_script("window.scrollBy(0, 700);")
@@ -191,7 +205,9 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_origina
                                 "current_price": current_price,
                                 "original_price": original_price,
                                 "discount": discount,
-                                "link": link
+                                "link": link,
+                                # AMENDMENT 3: Store the product type (keyword) for printing
+                                "theme": keyword if keyword else "General LEGO" 
                             })
 
                 except Exception as e:
@@ -214,13 +230,15 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_origina
                 print("No more pages or 'Next' button disabled. Ending pagination.")
                 break
 
-        print(f"\n--- Scrape Complete ---")
-        print(f"✅ Total unique products found with ≥{min_discount_percent}% discount across all pages: {len(all_discounted_products)}")
+        print(f"\n--- Scrape Complete for {keyword if keyword else 'All LEGO'} ---")
+        print(f"✅ Unique products found with ≥{min_discount_percent}% discount: {len(all_discounted_products)}")
 
         all_discounted_products.sort(key=lambda x: x["discount"], reverse=True)
 
         for idx, prod in enumerate(all_discounted_products, 1):
             print(f"\n[{idx}] {prod['title']}")
+            # AMENDMENT 3: Print the product type before the current price
+            print(f"    🧱 Product Type: {prod['theme']}") 
             print(f"    💰 Current: ${prod['current_price'] if prod['current_price'] is not None else 'N/A'}")
             print(f"    🏷️ Original: ${prod['original_price'] if prod['original_price'] is not None else 'N/A'}")
             print(f"    🔻 Discount: {prod['discount']}%")
@@ -236,11 +254,26 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent="", min_origina
 
 def main():
     print("🔎 Amazon LEGO Discount Scraper (GitHub Actions Edition)")
-    keyword = ''
-    min_discount_percent = 25
+    
+    # AMENDMENT 2: Change default discount rate to 30%
+    min_discount_percent = 30 
     min_original_price = 50
 
-    scrape_amazon_lego_selenium(keyword, min_discount_percent, min_original_price)
+    # AMENDMENT 1: Load from text file and loop through each product type
+    themes = load_lego_themes()
+    
+    for theme in themes:
+        display_name = theme if theme else "All LEGO"
+        print(f"\n{'='*50}")
+        print(f"🚀 STARTING SEARCH FOR: {display_name.upper()}")
+        print(f"{'='*50}")
+        
+        scrape_amazon_lego_selenium(keyword=theme, 
+                                    min_discount_percent=min_discount_percent, 
+                                    min_original_price=min_original_price)
+        
+        # Adding a small buffer between different theme searches to avoid hitting Amazon too fast
+        time.sleep(5) 
 
 if __name__ == "__main__":
     main()
