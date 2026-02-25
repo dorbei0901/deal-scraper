@@ -39,7 +39,6 @@ def load_lego_themes(filename="legoproduct.txt"):
 
 def send_email_report(deals):
     """Generates an HTML table and sends it via email securely."""
-    # Pull credentials securely from GitHub Secrets
     sender_email = os.getenv("GMAIL_ADDRESS")
     sender_password = os.getenv("GMAIL_APP_PASSWORD")
     recipient_email = os.getenv("RECIPIENT_EMAIL")
@@ -54,7 +53,7 @@ def send_email_report(deals):
 
     print(f"\n📧 Formatting {len(deals)} deals into an email report for {recipient_email}...")
 
-    # 1. Build the HTML Table
+    # AMENDMENT 2: Added Shipper and Seller to the HTML Table Headers
     html = """
     <html>
     <head>
@@ -76,6 +75,8 @@ def send_email_report(deals):
         <th>Current</th>
         <th>Original</th>
         <th>Discount</th>
+        <th>Shipper</th>
+        <th>Seller</th>
         <th>Amazon Link</th>
       </tr>
     """
@@ -88,6 +89,8 @@ def send_email_report(deals):
         <td>${deal['current_price']:.2f}</td>
         <td>${deal['original_price']:.2f}</td>
         <td style="color: red; font-weight: bold;">{deal['discount']}%</td>
+        <td>{deal.get('shipper', 'N/A')}</td>
+        <td>{deal.get('seller', 'N/A')}</td>
         <td><a href="{deal['link']}">View Deal</a></td>
       </tr>
         """
@@ -98,14 +101,12 @@ def send_email_report(deals):
     </html>
     """
 
-    # 2. Configure the Email
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"LEGO Deals Report - {len(deals)} Great Discounts Found!"
     msg["From"] = sender_email
     msg["To"] = recipient_email
     msg.attach(MIMEText(html, "html"))
 
-    # 3. Send via Gmail SMTP
     try:
         server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
         server.login(sender_email, sender_password)
@@ -226,6 +227,10 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                                 else:
                                     link = relative_link
 
+                    # AMENDMENT 1: Trim the name characters after " - "
+                    if title != "N/A" and " - " in title:
+                        title = title.split(" - ")[0].strip()
+
                     current_price_span = item.find("span", class_="a-price")
                     if current_price_span:
                         current_price_offscreen = current_price_span.find("span", class_="a-offscreen")
@@ -251,7 +256,7 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                     if current_price is not None and original_price is not None and original_price > 0 and original_price > current_price:
                         discount = round(((original_price - current_price) / original_price) * 100, 1)
 
-                    if title != "N/A" and link != "N/A" and "slredirect.amazon.ca" not in link and "N/A" not in title:
+                    if title != "N/A" and link != "N/A" and "slredirect.amazon.ca" not in link:
                         if discount >= min_discount_percent and original_price >= min_original_price:
                             
                             if amazon_tag:
@@ -266,6 +271,9 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                                 "original_price": original_price,
                                 "discount": discount,
                                 "link": final_link,
+                                "raw_link": link, # Stored to safely fetch Shipper/Seller data later
+                                "shipper": "N/A",
+                                "seller": "N/A",
                                 "theme": keyword if keyword else "General LEGO" 
                             })
 
@@ -286,6 +294,39 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                 time.sleep(4)
             else:
                 break
+
+        # AMENDMENT 2: After scraping all pages, visit only the qualified items to get Shipper/Seller
+        if all_discounted_products:
+            print(f"\n📦 Fetching Shipper & Seller info for {len(all_discounted_products)} qualified items...")
+            for deal in all_discounted_products:
+                try:
+                    driver.get(deal["raw_link"])
+                    time.sleep(3) # Give the product page a moment to load fully
+                    prod_soup = BeautifulSoup(driver.page_source, "html.parser")
+                    
+                    # Modern Amazon Buy Box Layout
+                    ships_from_div = prod_soup.find("div", {"tabular-attribute-name": "Ships from"})
+                    if ships_from_div:
+                        val = ships_from_div.find_next_sibling("div")
+                        if val: deal["shipper"] = val.get_text(strip=True)
+                        
+                    sold_by_div = prod_soup.find("div", {"tabular-attribute-name": "Sold by"})
+                    if sold_by_div:
+                        val = sold_by_div.find_next_sibling("div")
+                        if val: deal["seller"] = val.get_text(strip=True)
+                        
+                    # Older/Fallback Amazon Buy Box Layout
+                    if deal["shipper"] == "N/A" and deal["seller"] == "N/A":
+                        merchant_info = prod_soup.find("div", id="merchant-info")
+                        if merchant_info:
+                            merchant_text = merchant_info.get_text(separator=" ", strip=True)
+                            if "Ships from and sold by Amazon.ca" in merchant_text:
+                                deal["shipper"] = "Amazon.ca"
+                                deal["seller"] = "Amazon.ca"
+                            else:
+                                deal["seller"] = merchant_text[:40] + "..." # Truncate long 3rd party names
+                except Exception as e:
+                    print(f"  ⚠️ Could not load Shipper/Seller info for {deal['title'][:30]}: {e}")
 
         print(f"\n--- Scrape Complete for {keyword if keyword else 'All LEGO'} ---")
         print(f"✅ Unique products found with ≥{min_discount_percent}% discount: {len(all_discounted_products)}")
@@ -326,7 +367,6 @@ def main():
     if master_deal_list:
         master_deal_list.sort(key=lambda x: x["discount"], reverse=True)
     
-    # Safely passes the list to the email function; recipient is handled securely inside
     send_email_report(master_deal_list)
 
 if __name__ == "__main__":
