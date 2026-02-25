@@ -81,12 +81,13 @@ def send_email_report(deals):
         <th>Original Price</th>
         <th>Discounted Price</th>
         <th>Discount Percentage</th>
+        <th>Shipper</th>
+        <th>Seller</th>
         <th>Amazon Link</th>
       </tr>
     """
     
     for deal in deals:
-        # Highlight discounts > 0% in green for easy reading
         discount_style = 'style="color: green; font-weight: bold;"' if deal['discount'] > 0 else ''
         
         html += f"""
@@ -96,6 +97,8 @@ def send_email_report(deals):
         <td>{format_price(deal['original_price'])}</td>
         <td>{format_price(deal['current_price'])}</td>
         <td {discount_style}>{deal['discount']}%</td>
+        <td>{deal['shipper']}</td>
+        <td>{deal['seller']}</td>
         <td><a href="{deal['link']}">View Deal</a></td>
       </tr>
         """
@@ -134,13 +137,14 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
     driver = uc.Chrome(options=options, version_main=144)
     max_retries = 3 
     
-    # Default structure ensures every item is returned even if not found
     result_deal = {
         "title": "Not Found / Out of Stock",
         "lego_number": lego_number,
         "current_price": None,
         "original_price": None,
         "discount": 0.0,
+        "shipper": "N/A",
+        "seller": "N/A",
         "link": build_search_url(lego_number)
     }
 
@@ -182,10 +186,9 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
             print(f"❌ Failed to load search page for {lego_number}.")
             return result_deal
 
-        soup = BeautifulSoup(driver.page_source, "lxml")
+        soup = BeautifulSoup(driver.page_source, "html.parser")
         products = soup.find_all("div", {"data-component-type": "s-search-result"})
 
-        # Search the first few results for the specific LEGO number to avoid sponsored junk
         for item in products[:5]:
             title_text = "N/A"
             link = url
@@ -205,10 +208,15 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                         relative_link = link_tag_fallback.get("href", "")
                         link = "https://www.amazon.ca" + relative_link if not relative_link.startswith("http") else relative_link
 
-            # Ensure we are looking at the actual set, not a generic accessory
+            # Validate it's the right item
             if lego_number in title_text:
+                # AMENDMENT 1: Trim the name before " - "
+                if " - " in title_text:
+                    title_text = title_text.split(" - ")[0].strip()
+                
                 result_deal["title"] = title_text
                 
+                # Format affiliate link
                 if amazon_tag and "slredirect.amazon.ca" not in link:
                     separator = "&" if "?" in link else "?"
                     result_deal["link"] = f"{link}{separator}tag={amazon_tag}"
@@ -234,16 +242,44 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                     else:
                         result_deal["original_price"] = extract_price(strike_tag.get_text(strip=True))
 
-                # Handle missing original price (assume 0% discount)
                 if result_deal["current_price"] is not None and result_deal["original_price"] is None:
                     result_deal["original_price"] = result_deal["current_price"]
 
-                # Calculate true discount
                 if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
                     result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
 
-                print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Discount: {result_deal['discount']}%")
-                break # Stop searching once we find the matching set
+                # AMENDMENT 2: Visit the product page to get Shipper & Seller
+                try:
+                    driver.get(link)
+                    time.sleep(3)
+                    prod_soup = BeautifulSoup(driver.page_source, "html.parser")
+                    
+                    # Look for the newer tabular buy box layout
+                    ships_from_div = prod_soup.find("div", {"tabular-attribute-name": "Ships from"})
+                    if ships_from_div:
+                        val = ships_from_div.find_next_sibling("div")
+                        if val: result_deal["shipper"] = val.get_text(strip=True)
+                        
+                    sold_by_div = prod_soup.find("div", {"tabular-attribute-name": "Sold by"})
+                    if sold_by_div:
+                        val = sold_by_div.find_next_sibling("div")
+                        if val: result_deal["seller"] = val.get_text(strip=True)
+                        
+                    # Fallback for the older text-based buy box
+                    if result_deal["shipper"] == "N/A" and result_deal["seller"] == "N/A":
+                        merchant_info = prod_soup.find("div", id="merchant-info")
+                        if merchant_info:
+                            merchant_text = merchant_info.get_text(separator=" ", strip=True)
+                            if "Ships from and sold by Amazon.ca" in merchant_text:
+                                result_deal["shipper"] = "Amazon.ca"
+                                result_deal["seller"] = "Amazon.ca"
+                            else:
+                                result_deal["seller"] = merchant_text[:40] + "..." # Captures third-party details
+                except Exception as e:
+                    print(f"  ⚠️ Could not load Shipper/Seller info for {lego_number}: {e}")
+
+                print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Discount: {result_deal['discount']}% | Seller: {result_deal['seller']}")
+                break 
 
         return result_deal
 
@@ -267,9 +303,8 @@ def main():
         deal = scrape_single_lego_set(lego_number=number, amazon_tag=amazon_tag)
         master_watchlist_deals.append(deal)
             
-        time.sleep(3) # Small buffer between searches
+        time.sleep(3)
 
-    # Sort the list so the best discounts are at the top of your email
     if master_watchlist_deals:
         master_watchlist_deals.sort(key=lambda x: x["discount"], reverse=True)
     
