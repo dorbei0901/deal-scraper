@@ -1,4 +1,4 @@
-name: Hourly Lego Deal Check
+name: Hourly Lego Deal Check (Watchlist)
 
 on:
   schedule:
