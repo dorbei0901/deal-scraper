@@ -360,7 +360,7 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
 def main():
     print("🔎 Amazon LEGO Discount Scraper (GitHub Actions Edition)")
     
-    min_discount_percent = 25 
+    min_discount_percent = 30 
     min_original_price = 50
     amazon_tag = os.getenv('AMAZON_TAG', '')
 
