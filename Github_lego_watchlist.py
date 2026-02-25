@@ -189,4 +189,149 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
         soup = BeautifulSoup(driver.page_source, "html.parser")
         products = soup.find_all("div", {"data-component-type": "s-search-result"})
 
-        for item in products[:5
+        for item in products[:5]:
+            title_text = "N/A"
+            link = url
+            
+            link_tag = item.find("a", class_="a-link-normal s-line-clamp-4 s-link-style a-text-normal")
+            if link_tag:
+                title_tag = link_tag.find("h2")
+                title_text = title_tag.get_text(strip=True) if title_tag else "N/A"
+                link = "https://www.amazon.ca" + link_tag.get("href", "")
+            else: 
+                title_h2 = item.find("h2")
+                if title_h2:
+                    link_tag_fallback = title_h2.find("a", class_="a-link-normal")
+                    if link_tag_fallback:
+                        title_span = link_tag_fallback.find("span", class_="a-text-normal")
+                        title_text = title_span.get_text(strip=True) if title_span else "N/A"
+                        relative_link = link_tag_fallback.get("href", "")
+                        link = "https://www.amazon.ca" + relative_link if not relative_link.startswith("http") else relative_link
+
+            # Validate it's the right item
+            if lego_number in title_text:
+                # Trim the name before " - "
+                if " - " in title_text:
+                    title_text = title_text.split(" - ")[0].strip()
+                
+                result_deal["title"] = title_text
+                
+                # Format affiliate link
+                if amazon_tag and "slredirect.amazon.ca" not in link:
+                    separator = "&" if "?" in link else "?"
+                    result_deal["link"] = f"{link}{separator}tag={amazon_tag}"
+                else:
+                    result_deal["link"] = link
+
+                current_price_span = item.find("span", class_="a-price")
+                if current_price_span:
+                    offscreen = current_price_span.find("span", class_="a-offscreen")
+                    if offscreen:
+                        result_deal["current_price"] = extract_price(offscreen.get_text(strip=True))
+
+                original_price_span = item.find("span", class_="a-text-price")
+                if original_price_span:
+                    offscreen = original_price_span.find("span", class_="a-offscreen")
+                    if offscreen:
+                        result_deal["original_price"] = extract_price(offscreen.get_text(strip=True))
+                elif item.find('span', {'data-a-strike': 'true'}):
+                    strike_tag = item.find('span', {'data-a-strike': 'true'})
+                    offscreen = strike_tag.find('span', class_='a-offscreen')
+                    if offscreen:
+                        result_deal["original_price"] = extract_price(offscreen.get_text(strip=True))
+                    else:
+                        result_deal["original_price"] = extract_price(strike_tag.get_text(strip=True))
+
+                if result_deal["current_price"] is not None and result_deal["original_price"] is None:
+                    result_deal["original_price"] = result_deal["current_price"]
+
+                if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
+                    result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
+
+                # AMENDMENT 2 (UPDATED): Deep extraction for Shipper & Seller
+                try:
+                    driver.get(link)
+                    
+                    # Wait for the buybox container to render
+                    try:
+                        WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located((By.ID, "desktop_buybox"))
+                        )
+                    except TimeoutException:
+                        pass
+                        
+                    time.sleep(2) # Buffer for JS population
+                    prod_soup = BeautifulSoup(driver.page_source, "html.parser")
+                    
+                    # 1. Approach A: Tabular Layout with Rows/Columns
+                    for label, key in [("Ships from", "shipper"), ("Sold by", "seller")]:
+                        elem = prod_soup.find(attrs={"tabular-attribute-name": label})
+                        if elem:
+                            row = elem.find_parent("div", class_="a-row")
+                            if row:
+                                cols = row.find_all("div", class_="a-column")
+                                if len(cols) > 1:
+                                    result_deal[key] = cols[-1].get_text(strip=True)
+                            else:
+                                sibling = elem.find_next_sibling("div")
+                                if sibling:
+                                    result_deal[key] = sibling.get_text(strip=True)
+
+                    # 2. Approach B: Explicit Seller Link (Often used for 3rd parties)
+                    if result_deal["seller"] == "N/A":
+                        seller_link = prod_soup.find("a", id="sellerProfileTriggerId")
+                        if seller_link:
+                            result_deal["seller"] = seller_link.get_text(strip=True)
+
+                    # 3. Approach C: Raw Text Fallback (Best for Amazon.ca detection)
+                    if result_deal["shipper"] == "N/A" or result_deal["seller"] == "N/A":
+                        merchant_info = prod_soup.find("div", id="merchantInfoFeature_feature_div") or prod_soup.find("div", id="merchant-info")
+                        if merchant_info:
+                            text = merchant_info.get_text(separator=" ", strip=True)
+                            if "Ships from and sold by Amazon" in text or "Ships from Amazon.ca Sold by Amazon.ca" in text:
+                                result_deal["shipper"] = "Amazon.ca"
+                                result_deal["seller"] = "Amazon.ca"
+                            elif "Ships from Amazon" in text:
+                                result_deal["shipper"] = "Amazon.ca"
+
+                    # Format cleanup: If Amazon is detected anywhere in the string, clean it up to "Amazon.ca"
+                    if "Amazon" in result_deal["shipper"]: result_deal["shipper"] = "Amazon.ca"
+                    if "Amazon" in result_deal["seller"]: result_deal["seller"] = "Amazon.ca"
+
+                except Exception as e:
+                    print(f"  ⚠️ Could not load Shipper/Seller info for {lego_number}: {e}")
+
+                print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Discount: {result_deal['discount']}% | Seller: {result_deal['seller']}")
+                break 
+
+        return result_deal
+
+    except Exception as e:
+        print(f"Error processing {lego_number}: {e}")
+        return result_deal
+    finally:
+        if driver:
+            driver.quit()
+
+def main():
+    print("🔎 Amazon LEGO Watchlist Scraper (GitHub Actions Edition)")
+    
+    amazon_tag = os.getenv('AMAZON_TAG', '')
+    lego_numbers = load_lego_watchlist()
+    master_watchlist_deals = []
+    
+    for number in lego_numbers:
+        print(f"\n🚀 Checking Watchlist: LEGO {number}")
+        
+        deal = scrape_single_lego_set(lego_number=number, amazon_tag=amazon_tag)
+        master_watchlist_deals.append(deal)
+            
+        time.sleep(3)
+
+    if master_watchlist_deals:
+        master_watchlist_deals.sort(key=lambda x: x["discount"], reverse=True)
+    
+    send_email_report(master_watchlist_deals)
+
+if __name__ == "__main__":
+    main()
