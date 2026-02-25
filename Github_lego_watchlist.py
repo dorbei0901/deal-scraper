@@ -20,6 +20,21 @@ def extract_price(text):
     match = re.search(r'(\d+\.?\d*)', clean_text)
     return float(match.group(1)) if match else None
 
+def extract_lego_theme(title):
+    """Infers the LEGO theme from the product title."""
+    themes = [
+        "Technic", "Ideas", "Star Wars", "Creator", "City", "Friends", 
+        "Ninjago", "Harry Potter", "Marvel", "DC", "Architecture", 
+        "Icons", "Speed Champions", "Botanical Collection", "Super Mario", 
+        "Avatar", "Jurassic World", "Minecraft", "Disney", "Classic", "Duplo", 
+        "Art", "Indiana Jones", "Lord of the Rings", "Dreamzzz", "Monkie Kid"
+    ]
+    title_lower = title.lower()
+    for theme in themes:
+        if theme.lower() in title_lower:
+            return theme
+    return "General"
+
 def build_search_url(keyword: str) -> str:
     base_url = "https://www.amazon.ca/s"
     if keyword:
@@ -78,6 +93,7 @@ def send_email_report(deals):
       <tr>
         <th>Lego Name</th>
         <th>Lego Number</th>
+        <th>Lego Type</th>
         <th>Original Price</th>
         <th>Discounted Price</th>
         <th>Discount Percentage</th>
@@ -94,6 +110,7 @@ def send_email_report(deals):
       <tr>
         <td>{deal['title']}</td>
         <td>{deal['lego_number']}</td>
+        <td>{deal['theme']}</td>
         <td>{format_price(deal['original_price'])}</td>
         <td>{format_price(deal['current_price'])}</td>
         <td {discount_style}>{deal['discount']}%</td>
@@ -140,6 +157,7 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
     result_deal = {
         "title": "Not Found / Out of Stock",
         "lego_number": lego_number,
+        "theme": "N/A",
         "current_price": None,
         "original_price": None,
         "discount": 0.0,
@@ -211,7 +229,14 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
             # Validate it's the right item
             if lego_number in title_text:
                 
-                # AMENDMENT 1: Trim the name to 60 characters
+                # Extract the theme
+                result_deal["theme"] = extract_lego_theme(title_text)
+
+                # Trim the name before " - "
+                if " - " in title_text:
+                    title_text = title_text.split(" - ")[0].strip()
+                
+                # Enforce the 60 character limit
                 if len(title_text) > 60:
                     result_deal["title"] = title_text[:60].strip() + "..."
                 else:
@@ -249,58 +274,47 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                 if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
                     result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
 
-                # AMENDMENT 2: Target the specific "Shipper / Seller" unified row
+                # VISIT PRODUCT PAGE TO GET SHIPPER/SELLER
                 try:
                     driver.get(link)
-                    time.sleep(3) # Let page load
+                    time.sleep(3) 
                     prod_soup = BeautifulSoup(driver.page_source, "html.parser")
                     
-                    shipper_val, seller_val = "N/A", "N/A"
-
-                    # Approach A: Look for the combined "Shipper / Seller" label from the screenshot
-                    combined_label = prod_soup.find(lambda tag: tag.name in ['span', 'td', 'div'] and 'Shipper / Seller' in tag.get_text(strip=True))
-                    if combined_label:
-                        if combined_label.name == 'td':
-                            val_td = combined_label.find_next_sibling('td')
-                            if val_td:
-                                shipper_val = seller_val = val_td.get_text(strip=True)
-                        else:
-                            parent_attr = combined_label.find_parent("div", {"tabular-attribute-name": True})
-                            if parent_attr:
-                                val_div = parent_attr.find_next_sibling("div")
-                                if val_div:
-                                    shipper_val = seller_val = val_div.get_text(strip=True)
-
-                    # Approach B: Fallback to separate Ships from / Sold by
-                    if shipper_val == "N/A":
-                        ships_from_div = prod_soup.find("div", {"tabular-attribute-name": "Ships from"})
-                        if ships_from_div:
-                            val = ships_from_div.find_next_sibling("div")
-                            if val: shipper_val = val.get_text(strip=True)
+                    buybox = prod_soup.find("div", id="desktop_buybox") or prod_soup.find("div", id="buybox")
+                    
+                    if buybox:
+                        bb_text = buybox.get_text(separator=" ", strip=True)
+                        shipper_val, seller_val = "N/A", "N/A"
+                        
+                        # Fallback 1: Raw Regex Text Parsing (Most reliable for hidden DOMs)
+                        if "Shipper / Seller" in bb_text:
+                            # Grabs everything after "Shipper / Seller" until it hits words like Returns or Payment
+                            match = re.search(r'Shipper / Seller\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
+                            if match:
+                                shipper_val = seller_val = match.group(1).strip()
+                        
+                        elif "Ships from" in bb_text and "Sold by" in bb_text:
+                            shipper_match = re.search(r'Ships from\s+(.*?)(?:\s+Sold by|\s+Returns|\s+Payment|$)', bb_text)
+                            if shipper_match: shipper_val = shipper_match.group(1).strip()
                             
-                        sold_by_div = prod_soup.find("div", {"tabular-attribute-name": "Sold by"})
-                        if sold_by_div:
-                            val = sold_by_div.find_next_sibling("div")
-                            if val: seller_val = val.get_text(strip=True)
+                            seller_match = re.search(r'Sold by\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
+                            if seller_match: seller_val = seller_match.group(1).strip()
+                            
+                        # Extremely basic fallback just in case
+                        if "Ships from and sold by Amazon" in bb_text:
+                            shipper_val = seller_val = "Amazon.ca"
 
-                    # Approach C: Old merchant-info fallback
-                    if shipper_val == "N/A" and seller_val == "N/A":
-                        merchant_info = prod_soup.find("div", id="merchant-info")
-                        if merchant_info:
-                            merchant_text = merchant_info.get_text(separator=" ", strip=True)
-                            if "Ships from and sold by Amazon" in merchant_text:
-                                shipper_val = "Amazon.ca"
-                                seller_val = "Amazon.ca"
-                            else:
-                                seller_val = merchant_text[:40] + "..." 
-                                
-                    result_deal["shipper"] = shipper_val
-                    result_deal["seller"] = seller_val
+                        # Clean up formatting if it found it
+                        if "Amazon" in shipper_val: shipper_val = "Amazon.ca"
+                        if "Amazon" in seller_val: seller_val = "Amazon.ca"
+
+                        result_deal["shipper"] = shipper_val
+                        result_deal["seller"] = seller_val
 
                 except Exception as e:
                     print(f"  ⚠️ Could not load Shipper/Seller info for {lego_number}: {e}")
 
-                print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Discount: {result_deal['discount']}% | Seller: {result_deal['seller']}")
+                print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Type: {result_deal['theme']} | Discount: {result_deal['discount']}%")
                 break 
 
         return result_deal
