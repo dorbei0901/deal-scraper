@@ -210,11 +210,12 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
 
             # Validate it's the right item
             if lego_number in title_text:
-                # Trim the name before " - "
-                if " - " in title_text:
-                    title_text = title_text.split(" - ")[0].strip()
                 
-                result_deal["title"] = title_text
+                # AMENDMENT 1: Trim the name to 60 characters
+                if len(title_text) > 60:
+                    result_deal["title"] = title_text[:60].strip() + "..."
+                else:
+                    result_deal["title"] = title_text
                 
                 # Format affiliate link
                 if amazon_tag and "slredirect.amazon.ca" not in link:
@@ -248,55 +249,53 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                 if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
                     result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
 
-                # AMENDMENT 2 (UPDATED): Deep extraction for Shipper & Seller
+                # AMENDMENT 2: Target the specific "Shipper / Seller" unified row
                 try:
                     driver.get(link)
-                    
-                    # Wait for the buybox container to render
-                    try:
-                        WebDriverWait(driver, 5).until(
-                            EC.presence_of_element_located((By.ID, "desktop_buybox"))
-                        )
-                    except TimeoutException:
-                        pass
-                        
-                    time.sleep(2) # Buffer for JS population
+                    time.sleep(3) # Let page load
                     prod_soup = BeautifulSoup(driver.page_source, "html.parser")
                     
-                    # 1. Approach A: Tabular Layout with Rows/Columns
-                    for label, key in [("Ships from", "shipper"), ("Sold by", "seller")]:
-                        elem = prod_soup.find(attrs={"tabular-attribute-name": label})
-                        if elem:
-                            row = elem.find_parent("div", class_="a-row")
-                            if row:
-                                cols = row.find_all("div", class_="a-column")
-                                if len(cols) > 1:
-                                    result_deal[key] = cols[-1].get_text(strip=True)
-                            else:
-                                sibling = elem.find_next_sibling("div")
-                                if sibling:
-                                    result_deal[key] = sibling.get_text(strip=True)
+                    shipper_val, seller_val = "N/A", "N/A"
 
-                    # 2. Approach B: Explicit Seller Link (Often used for 3rd parties)
-                    if result_deal["seller"] == "N/A":
-                        seller_link = prod_soup.find("a", id="sellerProfileTriggerId")
-                        if seller_link:
-                            result_deal["seller"] = seller_link.get_text(strip=True)
+                    # Approach A: Look for the combined "Shipper / Seller" label from the screenshot
+                    combined_label = prod_soup.find(lambda tag: tag.name in ['span', 'td', 'div'] and 'Shipper / Seller' in tag.get_text(strip=True))
+                    if combined_label:
+                        if combined_label.name == 'td':
+                            val_td = combined_label.find_next_sibling('td')
+                            if val_td:
+                                shipper_val = seller_val = val_td.get_text(strip=True)
+                        else:
+                            parent_attr = combined_label.find_parent("div", {"tabular-attribute-name": True})
+                            if parent_attr:
+                                val_div = parent_attr.find_next_sibling("div")
+                                if val_div:
+                                    shipper_val = seller_val = val_div.get_text(strip=True)
 
-                    # 3. Approach C: Raw Text Fallback (Best for Amazon.ca detection)
-                    if result_deal["shipper"] == "N/A" or result_deal["seller"] == "N/A":
-                        merchant_info = prod_soup.find("div", id="merchantInfoFeature_feature_div") or prod_soup.find("div", id="merchant-info")
+                    # Approach B: Fallback to separate Ships from / Sold by
+                    if shipper_val == "N/A":
+                        ships_from_div = prod_soup.find("div", {"tabular-attribute-name": "Ships from"})
+                        if ships_from_div:
+                            val = ships_from_div.find_next_sibling("div")
+                            if val: shipper_val = val.get_text(strip=True)
+                            
+                        sold_by_div = prod_soup.find("div", {"tabular-attribute-name": "Sold by"})
+                        if sold_by_div:
+                            val = sold_by_div.find_next_sibling("div")
+                            if val: seller_val = val.get_text(strip=True)
+
+                    # Approach C: Old merchant-info fallback
+                    if shipper_val == "N/A" and seller_val == "N/A":
+                        merchant_info = prod_soup.find("div", id="merchant-info")
                         if merchant_info:
-                            text = merchant_info.get_text(separator=" ", strip=True)
-                            if "Ships from and sold by Amazon" in text or "Ships from Amazon.ca Sold by Amazon.ca" in text:
-                                result_deal["shipper"] = "Amazon.ca"
-                                result_deal["seller"] = "Amazon.ca"
-                            elif "Ships from Amazon" in text:
-                                result_deal["shipper"] = "Amazon.ca"
-
-                    # Format cleanup: If Amazon is detected anywhere in the string, clean it up to "Amazon.ca"
-                    if "Amazon" in result_deal["shipper"]: result_deal["shipper"] = "Amazon.ca"
-                    if "Amazon" in result_deal["seller"]: result_deal["seller"] = "Amazon.ca"
+                            merchant_text = merchant_info.get_text(separator=" ", strip=True)
+                            if "Ships from and sold by Amazon" in merchant_text:
+                                shipper_val = "Amazon.ca"
+                                seller_val = "Amazon.ca"
+                            else:
+                                seller_val = merchant_text[:40] + "..." 
+                                
+                    result_deal["shipper"] = shipper_val
+                    result_deal["seller"] = seller_val
 
                 except Exception as e:
                     print(f"  ⚠️ Could not load Shipper/Seller info for {lego_number}: {e}")
