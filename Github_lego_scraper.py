@@ -53,7 +53,6 @@ def send_email_report(deals):
 
     print(f"\n📧 Formatting {len(deals)} deals into an email report for {recipient_email}...")
 
-    # AMENDMENT 2: Added Shipper and Seller to the HTML Table Headers
     html = """
     <html>
     <head>
@@ -227,7 +226,7 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                                 else:
                                     link = relative_link
 
-                    # AMENDMENT 1: Trim the name characters after " - "
+                    # Trim the name characters after " - "
                     if title != "N/A" and " - " in title:
                         title = title.split(" - ")[0].strip()
 
@@ -271,7 +270,7 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                                 "original_price": original_price,
                                 "discount": discount,
                                 "link": final_link,
-                                "raw_link": link, # Stored to safely fetch Shipper/Seller data later
+                                "raw_link": link,
                                 "shipper": "N/A",
                                 "seller": "N/A",
                                 "theme": keyword if keyword else "General LEGO" 
@@ -295,36 +294,55 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
             else:
                 break
 
-        # AMENDMENT 2: After scraping all pages, visit only the qualified items to get Shipper/Seller
+        # After scraping all pages, visit only the qualified items to get Shipper/Seller
         if all_discounted_products:
             print(f"\n📦 Fetching Shipper & Seller info for {len(all_discounted_products)} qualified items...")
             for deal in all_discounted_products:
                 try:
                     driver.get(deal["raw_link"])
-                    time.sleep(3) # Give the product page a moment to load fully
+                    
+                    # Wait for the buybox container to render
+                    try:
+                        WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located((By.ID, "desktop_buybox"))
+                        )
+                    except TimeoutException:
+                        pass
+                        
+                    time.sleep(2) # Buffer for JS population
                     prod_soup = BeautifulSoup(driver.page_source, "html.parser")
                     
-                    # Modern Amazon Buy Box Layout
-                    ships_from_div = prod_soup.find("div", {"tabular-attribute-name": "Ships from"})
-                    if ships_from_div:
-                        val = ships_from_div.find_next_sibling("div")
-                        if val: deal["shipper"] = val.get_text(strip=True)
+                    buybox = prod_soup.find("div", id="desktop_buybox") or prod_soup.find("div", id="buybox")
+                    
+                    if buybox:
+                        bb_text = buybox.get_text(separator=" ", strip=True)
+                        shipper_val, seller_val = "N/A", "N/A"
                         
-                    sold_by_div = prod_soup.find("div", {"tabular-attribute-name": "Sold by"})
-                    if sold_by_div:
-                        val = sold_by_div.find_next_sibling("div")
-                        if val: deal["seller"] = val.get_text(strip=True)
+                        # Fallback 1: Raw Regex Text Parsing (Most reliable for hidden DOMs)
+                        if "Shipper / Seller" in bb_text:
+                            # Grabs everything after "Shipper / Seller" until it hits words like Returns or Payment
+                            match = re.search(r'Shipper / Seller\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
+                            if match:
+                                shipper_val = seller_val = match.group(1).strip()
                         
-                    # Older/Fallback Amazon Buy Box Layout
-                    if deal["shipper"] == "N/A" and deal["seller"] == "N/A":
-                        merchant_info = prod_soup.find("div", id="merchant-info")
-                        if merchant_info:
-                            merchant_text = merchant_info.get_text(separator=" ", strip=True)
-                            if "Ships from and sold by Amazon.ca" in merchant_text:
-                                deal["shipper"] = "Amazon.ca"
-                                deal["seller"] = "Amazon.ca"
-                            else:
-                                deal["seller"] = merchant_text[:40] + "..." # Truncate long 3rd party names
+                        elif "Ships from" in bb_text and "Sold by" in bb_text:
+                            shipper_match = re.search(r'Ships from\s+(.*?)(?:\s+Sold by|\s+Returns|\s+Payment|$)', bb_text)
+                            if shipper_match: shipper_val = shipper_match.group(1).strip()
+                            
+                            seller_match = re.search(r'Sold by\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
+                            if seller_match: seller_val = seller_match.group(1).strip()
+                            
+                        # Extremely basic fallback just in case
+                        if "Ships from and sold by Amazon" in bb_text:
+                            shipper_val = seller_val = "Amazon.ca"
+
+                        # Clean up formatting if it found it
+                        if "Amazon" in shipper_val: shipper_val = "Amazon.ca"
+                        if "Amazon" in seller_val: seller_val = "Amazon.ca"
+
+                        deal["shipper"] = shipper_val
+                        deal["seller"] = seller_val
+                        
                 except Exception as e:
                     print(f"  ⚠️ Could not load Shipper/Seller info for {deal['title'][:30]}: {e}")
 
