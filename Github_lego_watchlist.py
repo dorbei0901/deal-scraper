@@ -167,7 +167,6 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
             driver.get(url)
             time.sleep(random.uniform(3, 5)) 
 
-            # Handle Captcha/Bot Blocks
             if "captcha" in driver.current_url.lower() or "Robot Check" in driver.title:
                 print(f"  ⚠️ Amazon bot check detected. Resting and clearing cookies...")
                 driver.delete_all_cookies()
@@ -178,7 +177,7 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
             try:
                 WebDriverWait(driver, 8).until(
                     lambda d: "/dp/" in d.current_url or "/product/" in d.current_url or \
-                              d.find_elements(By.CSS_SELECTOR, "div[data-asin]")
+                              d.find_elements(By.CSS_SELECTOR, "div[data-component-type='s-search-result']")
                 )
                 break 
             except TimeoutException:
@@ -187,35 +186,41 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
         
-        # Step 2: Determine where Amazon sent us
+        # Step 2: Determine Target URL using robust search parsing
         if "/dp/" in driver.current_url or "/product/" in driver.current_url:
-            # Direct redirect to the product page
             target_url = driver.current_url
         else:
-            # We are on the search results page. Find the correct item link.
-            products = soup.find_all("div", {"data-asin": True})
-            for item in products:
-                asin = item.get("data-asin")
-                if not asin: continue
+            products = soup.find_all("div", {"data-component-type": "s-search-result"})
+            
+            for item in products[:5]:
+                title_text = "N/A"
+                link = ""
                 
-                title_tag = item.find("h2")
-                if not title_tag: continue
-                
-                link_tag = title_tag.find("a")
-                if not link_tag: continue
-                
-                title_text = title_tag.get_text(strip=True)
-                title_lower = title_text.lower()
-                
-                # Check for correct LEGO set and avoid 3rd party light kits/display cases
-                if str(lego_number) not in title_text: continue
-                
-                junk_words = ["light", "led", "display", "briksmax", "lightailing", "acrylic"]
-                if any(junk in title_lower for junk in junk_words): continue
-                
-                # We found the real set! Grab the link and exit the search loop
-                target_url = "https://www.amazon.ca" + link_tag.get("href")
-                break
+                # Robust extraction identical to the working v3 script
+                link_tag = item.find("a", class_="a-link-normal s-line-clamp-4 s-link-style a-text-normal")
+                if link_tag:
+                    title_tag = link_tag.find("h2")
+                    title_text = title_tag.get_text(strip=True) if title_tag else "N/A"
+                    link_href = link_tag.get("href", "")
+                    link = link_href if link_href.startswith("http") else "https://www.amazon.ca" + link_href
+                else: 
+                    title_h2 = item.find("h2")
+                    if title_h2:
+                        link_tag_fallback = title_h2.find("a", class_="a-link-normal")
+                        if link_tag_fallback:
+                            title_span = link_tag_fallback.find("span", class_="a-text-normal")
+                            title_text = title_span.get_text(strip=True) if title_span else "N/A"
+                            relative_link = link_tag_fallback.get("href", "")
+                            link = relative_link if relative_link.startswith("http") else "https://www.amazon.ca" + relative_link
+
+                # Check if it's the correct set and NOT a light kit
+                if str(lego_number) in title_text:
+                    junk_words = ["light", "led", "display", "briksmax", "lightailing", "acrylic"]
+                    if any(junk in title_text.lower() for junk in junk_words):
+                        continue # Skip junk listings
+                    
+                    target_url = link
+                    break # Target acquired
 
         # Step 3: Deep Link Extraction
         if target_url:
@@ -226,15 +231,9 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
                 
             title_elem = soup.find(id="productTitle")
             if not title_elem:
-                return result_deal # Page didn't load properly
+                return result_deal 
                 
             title_text = title_elem.get_text(strip=True)
-            
-            # Double check it isn't a light kit that slipped through a direct redirect
-            junk_words = ["light", "led", "display", "briksmax", "lightailing", "acrylic"]
-            if any(junk in title_text.lower() for junk in junk_words):
-                return result_deal
-                
             result_deal["theme"] = extract_lego_theme(title_text)
 
             # Name Trimming Rules
@@ -304,7 +303,6 @@ def main():
     lego_numbers = load_lego_watchlist()
     master_watchlist_deals = []
     
-    # Initialize the browser ONLY ONCE for the entire script
     options = uc.ChromeOptions()
     options.add_argument("--headless=new") 
     options.add_argument("--no-sandbox")
@@ -316,7 +314,6 @@ def main():
     driver = uc.Chrome(options=options, version_main=144)
     
     try:
-        # Warmup the session
         driver.get("https://www.amazon.ca")
         time.sleep(4)
         
@@ -325,7 +322,6 @@ def main():
             deal = scrape_single_lego_set(driver, lego_number=number, amazon_tag=amazon_tag)
             master_watchlist_deals.append(deal)
             
-            # Randomized human-like delay between searches
             time.sleep(random.uniform(4, 7))
 
         if master_watchlist_deals:
