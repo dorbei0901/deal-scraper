@@ -36,12 +36,13 @@ def extract_lego_theme(title):
     return "General"
 
 def build_search_url(keyword: str) -> str:
+    """Builds search URL. Removed strict brand filter to prevent false negatives on 3rd party listings."""
     base_url = "https://www.amazon.ca/s"
     if keyword:
         kw_encoded = keyword.strip().replace(' ', '+')
-        query = f"k=lego+{kw_encoded}&rh=p_89%3ALEGO"
+        query = f"k=lego+{kw_encoded}"
     else:
-        query = "k=lego&rh=p_89%3ALEGO"
+        query = "k=lego"
     return f"{base_url}?{query}"
 
 def load_lego_watchlist(filename="legowatchlist.txt"):
@@ -191,8 +192,10 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                 time.sleep(6) 
             else:
                 try:
+                    # NEW: Wait for EITHER the search results container OR the Product Title (Direct Redirect)
                     WebDriverWait(driver, 8).until(
-                        EC.visibility_of_element_located((By.CSS_SELECTOR, "div[data-component-type='s-search-result']"))
+                        lambda d: d.find_elements(By.CSS_SELECTOR, "div[data-component-type='s-search-result']") or \
+                                  d.find_elements(By.ID, "productTitle")
                     )
                     initial_load_successful = True
                     break 
@@ -201,10 +204,72 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                     time.sleep(5)
 
         if not initial_load_successful:
-            print(f"❌ Failed to load search page for {lego_number}.")
+            print(f"❌ Failed to load page for {lego_number}. Amazon may be blocking the connection.")
             return result_deal
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
+        
+        # --- PATH A: AMAZON REDIRECTED DIRECTLY TO THE PRODUCT PAGE ---
+        is_product_page = soup.find(id="productTitle") is not None
+        
+        if is_product_page:
+            title_text = soup.find(id="productTitle").get_text(strip=True)
+            link = driver.current_url
+            
+            if lego_number in title_text:
+                result_deal["theme"] = extract_lego_theme(title_text)
+                if " - " in title_text: title_text = title_text.split(" - ")[0].strip()
+                if len(title_text) > 60: result_deal["title"] = title_text[:60].strip() + "..."
+                else: result_deal["title"] = title_text
+                    
+                # Clean affiliate link creation
+                clean_link = link.split('?')[0]
+                if "/ref=" in clean_link: clean_link = clean_link.split("/ref=")[0]
+                result_deal["link"] = f"{clean_link}?tag={amazon_tag}" if amazon_tag else clean_link
+
+                # Extract Prices Directly from Product Page
+                current_price_elem = soup.select_one('span.priceToPay span.a-offscreen') or soup.select_one('span#priceblock_ourprice')
+                if current_price_elem:
+                    result_deal["current_price"] = extract_price(current_price_elem.get_text(strip=True))
+                    
+                original_price_elem = soup.select_one('span.basisPrice span.a-offscreen')
+                if original_price_elem:
+                    result_deal["original_price"] = extract_price(original_price_elem.get_text(strip=True))
+                    
+                if result_deal["current_price"] is not None and result_deal["original_price"] is None:
+                    result_deal["original_price"] = result_deal["current_price"]
+
+                if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
+                    result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
+
+                # Extract Shipper/Seller directly
+                buybox = soup.find("div", id="desktop_buybox") or soup.find("div", id="buybox")
+                if buybox:
+                    bb_text = buybox.get_text(separator=" ", strip=True)
+                    shipper_val, seller_val = "N/A", "N/A"
+                    
+                    if "Shipper / Seller" in bb_text:
+                        match = re.search(r'Shipper / Seller\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
+                        if match: shipper_val = seller_val = match.group(1).strip()
+                    elif "Ships from" in bb_text and "Sold by" in bb_text:
+                        shipper_match = re.search(r'Ships from\s+(.*?)(?:\s+Sold by|\s+Returns|\s+Payment|$)', bb_text)
+                        if shipper_match: shipper_val = shipper_match.group(1).strip()
+                        seller_match = re.search(r'Sold by\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
+                        if seller_match: seller_val = seller_match.group(1).strip()
+                        
+                    if "Ships from and sold by Amazon" in bb_text:
+                        shipper_val = seller_val = "Amazon.ca"
+
+                    if "Amazon" in shipper_val: shipper_val = "Amazon.ca"
+                    if "Amazon" in seller_val: seller_val = "Amazon.ca"
+
+                    result_deal["shipper"] = shipper_val
+                    result_deal["seller"] = seller_val
+
+                print(f"✅ Found {lego_number} (Direct Match): {result_deal['title'][:40]}... | Type: {result_deal['theme']} | Discount: {result_deal['discount']}%")
+                return result_deal
+        
+        # --- PATH B: NORMAL SEARCH RESULTS PAGE ---
         products = soup.find_all("div", {"data-component-type": "s-search-result"})
 
         for item in products[:5]:
@@ -228,26 +293,20 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
 
             # Validate it's the right item
             if lego_number in title_text:
-                
-                # Extract the theme
                 result_deal["theme"] = extract_lego_theme(title_text)
 
-                # Trim the name before " - "
                 if " - " in title_text:
                     title_text = title_text.split(" - ")[0].strip()
                 
-                # Enforce the 60 character limit
                 if len(title_text) > 60:
                     result_deal["title"] = title_text[:60].strip() + "..."
                 else:
                     result_deal["title"] = title_text
                 
-                # Format affiliate link
-                if amazon_tag and "slredirect.amazon.ca" not in link:
-                    separator = "&" if "?" in link else "?"
-                    result_deal["link"] = f"{link}{separator}tag={amazon_tag}"
-                else:
-                    result_deal["link"] = link
+                # Clean affiliate link
+                clean_link = link.split('?')[0]
+                if "/ref=" in clean_link: clean_link = clean_link.split("/ref=")[0]
+                result_deal["link"] = f"{clean_link}?tag={amazon_tag}" if amazon_tag and "slredirect" not in link else clean_link
 
                 current_price_span = item.find("span", class_="a-price")
                 if current_price_span:
@@ -286,25 +345,18 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                         bb_text = buybox.get_text(separator=" ", strip=True)
                         shipper_val, seller_val = "N/A", "N/A"
                         
-                        # Fallback 1: Raw Regex Text Parsing (Most reliable for hidden DOMs)
                         if "Shipper / Seller" in bb_text:
-                            # Grabs everything after "Shipper / Seller" until it hits words like Returns or Payment
                             match = re.search(r'Shipper / Seller\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
-                            if match:
-                                shipper_val = seller_val = match.group(1).strip()
-                        
+                            if match: shipper_val = seller_val = match.group(1).strip()
                         elif "Ships from" in bb_text and "Sold by" in bb_text:
                             shipper_match = re.search(r'Ships from\s+(.*?)(?:\s+Sold by|\s+Returns|\s+Payment|$)', bb_text)
                             if shipper_match: shipper_val = shipper_match.group(1).strip()
-                            
                             seller_match = re.search(r'Sold by\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
                             if seller_match: seller_val = seller_match.group(1).strip()
                             
-                        # Extremely basic fallback just in case
                         if "Ships from and sold by Amazon" in bb_text:
                             shipper_val = seller_val = "Amazon.ca"
 
-                        # Clean up formatting if it found it
                         if "Amazon" in shipper_val: shipper_val = "Amazon.ca"
                         if "Amazon" in seller_val: seller_val = "Amazon.ca"
 
