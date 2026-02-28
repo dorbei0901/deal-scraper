@@ -1,9 +1,9 @@
-name: Hourly Lego Deal Check (Walmart)
+name: Daily Lego Deal Check (Walmart)
 
 on:
   schedule:
-# Changed from 0 to 17 to bypass GitHub's top-of-the-hour traffic jam
-    - cron: ' * * * *'
+    # Runs at minute 33 past 16:00 UTC (8:33 AM PST) every day
+    - cron: '33 16 * * *'
   workflow_dispatch:
 
 jobs:
@@ -29,6 +29,5 @@ jobs:
           AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }} # Add this line
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
         run: python Affiliate_Walmart_Github.py
-        
