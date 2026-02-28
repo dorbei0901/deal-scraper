@@ -143,7 +143,7 @@ def send_email_report(deals):
         print(f"❌ Failed to send email: {e}")
 
 def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
-    """Searches for a specific LEGO number and deep-links to its product page for accurate extraction."""
+    """Searches using robust ASIN-extraction and deep-links to product page."""
     max_retries = 3 
     
     result_deal = {
@@ -160,7 +160,12 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
 
     try:
         url = result_deal["link"]
+        target_asin = None
         target_url = None
+        
+        # Fallback variables in case the product page hides the price
+        search_current_price = None
+        search_original_price = None
         
         # Step 1: Execute Search
         for attempt in range(max_retries):
@@ -175,9 +180,10 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
                 continue
 
             try:
+                # Wait universally for ANY product container to load on the page
                 WebDriverWait(driver, 8).until(
                     lambda d: "/dp/" in d.current_url or "/product/" in d.current_url or \
-                              d.find_elements(By.CSS_SELECTOR, "div[data-component-type='s-search-result']")
+                              d.find_elements(By.CSS_SELECTOR, "div[data-asin]")
                 )
                 break 
             except TimeoutException:
@@ -186,112 +192,130 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
         
-        # Step 2: Determine Target URL using robust search parsing
+        # Step 2: Determine Target ASIN / URL
         if "/dp/" in driver.current_url or "/product/" in driver.current_url:
             target_url = driver.current_url
         else:
-            products = soup.find_all("div", {"data-component-type": "s-search-result"})
+            # We are on the search page. Scan all loaded items for the correct Lego Number.
+            products = soup.find_all("div", attrs={"data-asin": True})
             
-            for item in products[:5]:
-                title_text = "N/A"
-                link = ""
+            for item in products:
+                asin = item.get("data-asin")
+                if not asin or len(asin) < 10:
+                    continue # Skip empty grid boxes
                 
-                # Robust extraction identical to the working v3 script
-                link_tag = item.find("a", class_="a-link-normal s-line-clamp-4 s-link-style a-text-normal")
-                if link_tag:
-                    title_tag = link_tag.find("h2")
-                    title_text = title_tag.get_text(strip=True) if title_tag else "N/A"
-                    link_href = link_tag.get("href", "")
-                    link = link_href if link_href.startswith("http") else "https://www.amazon.ca" + link_href
-                else: 
-                    title_h2 = item.find("h2")
-                    if title_h2:
-                        link_tag_fallback = title_h2.find("a", class_="a-link-normal")
-                        if link_tag_fallback:
-                            title_span = link_tag_fallback.find("span", class_="a-text-normal")
-                            title_text = title_span.get_text(strip=True) if title_span else "N/A"
-                            relative_link = link_tag_fallback.get("href", "")
-                            link = relative_link if relative_link.startswith("http") else "https://www.amazon.ca" + relative_link
-
-                # Check if it's the correct set and NOT a light kit
+                title_tag = item.find("h2")
+                if not title_tag:
+                    continue
+                    
+                title_text = title_tag.get_text(strip=True)
+                
+                # Verify it's the correct Lego and NOT a 3rd party light kit
                 if str(lego_number) in title_text:
                     junk_words = ["light", "led", "display", "briksmax", "lightailing", "acrylic"]
                     if any(junk in title_text.lower() for junk in junk_words):
-                        continue # Skip junk listings
+                        continue 
+                        
+                    target_asin = asin
                     
-                    target_url = link
-                    break # Target acquired
+                    # Opportunistically grab search page prices as a backup
+                    price_span = item.find("span", class_="a-price")
+                    if price_span:
+                        off = price_span.find("span", class_="a-offscreen")
+                        if off: search_current_price = extract_price(off.get_text(strip=True))
+                        
+                    orig_span = item.find("span", class_="a-text-price")
+                    if orig_span:
+                        off = orig_span.find("span", class_="a-offscreen")
+                        if off: search_original_price = extract_price(off.get_text(strip=True))
+                    elif item.find('span', {'data-a-strike': 'true'}):
+                        strike = item.find('span', {'data-a-strike': 'true'})
+                        off = strike.find('span', class_='a-offscreen')
+                        if off: search_original_price = extract_price(off.get_text(strip=True))
+                        else: search_original_price = extract_price(strike.get_text(strip=True))
 
-        # Step 3: Deep Link Extraction
-        if target_url:
-            if target_url != driver.current_url:
-                driver.get(target_url)
-                time.sleep(random.uniform(3, 5))
-                soup = BeautifulSoup(driver.page_source, "html.parser")
-                
-            title_elem = soup.find(id="productTitle")
-            if not title_elem:
-                return result_deal 
-                
-            title_text = title_elem.get_text(strip=True)
-            result_deal["theme"] = extract_lego_theme(title_text)
+                    break # Target ASIN secured! Exit loop.
 
-            # Name Trimming Rules
-            if " - " in title_text:
-                title_text = title_text.split(" - ")[0].strip()
-            if len(title_text) > 60:
-                result_deal["title"] = title_text[:60].strip() + "..."
-            else:
-                result_deal["title"] = title_text
-            
-            # Affiliate Link Cleaning
-            clean_link = driver.current_url.split('?')[0].split('/ref=')[0]
-            result_deal["link"] = f"{clean_link}?tag={amazon_tag}" if amazon_tag else clean_link
-
-            # Master Price Extraction
-            current_price_elem = soup.select_one('.priceToPay span.a-offscreen') or soup.select_one('.apexPriceToPay span.a-offscreen') or soup.select_one('#corePrice_feature_div span.a-offscreen')
-            if current_price_elem: result_deal["current_price"] = extract_price(current_price_elem.get_text(strip=True))
-
-            original_price_elem = soup.select_one('.basisPrice span.a-offscreen') or soup.select_one('span.a-text-strike') or soup.select_one('#corePriceDisplay_desktop_feature_div span.a-text-strike')
-            if original_price_elem: result_deal["original_price"] = extract_price(original_price_elem.get_text(strip=True))
-
-            if result_deal["current_price"] is not None and result_deal["original_price"] is None:
-                result_deal["original_price"] = result_deal["current_price"]
-
-            if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
-                result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
-
-            # Master Shipper/Seller Extraction
-            buybox = soup.find("div", id="desktop_buybox") or soup.find("div", id="buybox")
-            if buybox:
-                bb_text = buybox.get_text(separator=" ", strip=True)
-                shipper_val, seller_val = "N/A", "N/A"
-                
-                if "Shipper / Seller" in bb_text:
-                    match = re.search(r'Shipper / Seller\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
-                    if match: shipper_val = seller_val = match.group(1).strip()
-                elif "Ships from" in bb_text and "Sold by" in bb_text:
-                    shipper_match = re.search(r'Ships from\s+(.*?)(?:\s+Sold by|\s+Returns|\s+Payment|$)', bb_text)
-                    if shipper_match: shipper_val = shipper_match.group(1).strip()
-                    seller_match = re.search(r'Sold by\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
-                    if seller_match: seller_val = seller_match.group(1).strip()
-                    
-                if "Ships from and sold by Amazon" in bb_text:
-                    shipper_val = seller_val = "Amazon.ca"
-
-                if "Amazon" in shipper_val: shipper_val = "Amazon.ca"
-                if "Amazon" in seller_val: seller_val = "Amazon.ca"
-
-                result_deal["shipper"] = shipper_val
-                result_deal["seller"] = seller_val
-
-            print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Type: {result_deal['theme']} | Discount: {result_deal['discount']}%")
-            return result_deal
-            
-        else:
+        # Route the Target URL
+        if target_asin:
+            target_url = f"https://www.amazon.ca/dp/{target_asin}"
+        
+        if not target_url:
             print(f"❌ Could not locate {lego_number} in search results.")
             return result_deal
 
+        # Step 3: Deep Link Extraction on Product Page
+        if target_url != driver.current_url:
+            driver.get(target_url)
+            time.sleep(random.uniform(3, 5)) # Give Javascript time to render the price and buybox
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            
+        title_elem = soup.find(id="productTitle")
+        if not title_elem:
+            return result_deal 
+            
+        title_text = title_elem.get_text(strip=True)
+        result_deal["theme"] = extract_lego_theme(title_text)
+
+        # Name Trimming Rules
+        if " - " in title_text:
+            title_text = title_text.split(" - ")[0].strip()
+        if len(title_text) > 60:
+            result_deal["title"] = title_text[:60].strip() + "..."
+        else:
+            result_deal["title"] = title_text
+        
+        # Affiliate Link Generation
+        result_deal["link"] = f"https://www.amazon.ca/dp/{target_asin}?tag={amazon_tag}" if target_asin and amazon_tag else driver.current_url
+
+        # Master Price Extraction - Try Product Page First
+        current_price_elem = soup.select_one('.priceToPay span.a-offscreen') or soup.select_one('.apexPriceToPay span.a-offscreen') or soup.select_one('#corePrice_feature_div span.a-offscreen')
+        
+        if current_price_elem: 
+            result_deal["current_price"] = extract_price(current_price_elem.get_text(strip=True))
+        else:
+            result_deal["current_price"] = search_current_price # Use Search Page Fallback
+
+        original_price_elem = soup.select_one('.basisPrice span.a-offscreen') or soup.select_one('span.a-text-strike') or soup.select_one('#corePriceDisplay_desktop_feature_div span.a-text-strike')
+        
+        if original_price_elem: 
+            result_deal["original_price"] = extract_price(original_price_elem.get_text(strip=True))
+        else:
+            result_deal["original_price"] = search_original_price # Use Search Page Fallback
+
+        if result_deal["current_price"] is not None and result_deal["original_price"] is None:
+            result_deal["original_price"] = result_deal["current_price"]
+
+        if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
+            result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
+
+        # Master Shipper/Seller Extraction
+        buybox = soup.find("div", id="desktop_buybox") or soup.find("div", id="buybox")
+        if buybox:
+            bb_text = buybox.get_text(separator=" ", strip=True)
+            shipper_val, seller_val = "N/A", "N/A"
+            
+            if "Shipper / Seller" in bb_text:
+                match = re.search(r'Shipper / Seller\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
+                if match: shipper_val = seller_val = match.group(1).strip()
+            elif "Ships from" in bb_text and "Sold by" in bb_text:
+                shipper_match = re.search(r'Ships from\s+(.*?)(?:\s+Sold by|\s+Returns|\s+Payment|$)', bb_text)
+                if shipper_match: shipper_val = shipper_match.group(1).strip()
+                seller_match = re.search(r'Sold by\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
+                if seller_match: seller_val = seller_match.group(1).strip()
+                
+            if "Ships from and sold by Amazon" in bb_text:
+                shipper_val = seller_val = "Amazon.ca"
+
+            if "Amazon" in shipper_val: shipper_val = "Amazon.ca"
+            if "Amazon" in seller_val: seller_val = "Amazon.ca"
+
+            result_deal["shipper"] = shipper_val
+            result_deal["seller"] = seller_val
+
+        print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Type: {result_deal['theme']} | Discount: {result_deal['discount']}%")
+        return result_deal
+        
     except Exception as e:
         print(f"Error processing {lego_number}: {e}")
         return result_deal
