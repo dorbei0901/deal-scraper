@@ -163,7 +163,6 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
         target_asin = None
         target_url = None
         
-        # Fallback variables in case the product page hides the price
         search_current_price = None
         search_original_price = None
         
@@ -179,12 +178,10 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
                 time.sleep(5)
                 continue
 
-            # NEW: Scroll down slightly to force Amazon to render images & lazy-loaded titles
             driver.execute_script("window.scrollBy(0, 800);")
             time.sleep(2)
 
             try:
-                # Wait universally for ANY product container to load on the page
                 WebDriverWait(driver, 8).until(
                     lambda d: "/dp/" in d.current_url or "/product/" in d.current_url or \
                               d.find_elements(By.CSS_SELECTOR, "div[data-component-type='s-search-result']") or \
@@ -197,62 +194,60 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
         
+        # Determine the core 4 or 5 digit Lego number to search for (fixes multi-word lines in text file)
+        match = re.search(r'\d{4,5}', str(lego_number))
+        core_set_number = match.group(0) if match else str(lego_number).lower().strip()
+        
+        # Extensive Junk Filter
+        junk_words = [
+            "light kit", "led light", "lighting kit", "briksmax", "lightailing", 
+            "acrylic", "display case", "wall mount", "display stand", "wall hanger", "frame"
+        ]
+
         # Step 2: Determine Target ASIN / URL
         if "/dp/" in driver.current_url or "/product/" in driver.current_url:
             target_url = driver.current_url
         else:
-            # We are on the search page. Scan all loaded items for the correct Lego Number.
+            # We are on the search page. Use aggressive whole-block text scanning.
             products = soup.find_all("div", attrs={"data-asin": True})
             
             for item in products:
                 asin = item.get("data-asin")
                 if not asin or len(asin) < 10:
-                    continue # Skip empty grid boxes
+                    continue 
                 
-                # NEW: Catch-all title extraction to beat Amazon's changing layout
-                title_elem = item.find("span", class_="a-size-medium") or \
-                             item.find("span", class_="a-size-base-plus") or \
-                             item.find("span", class_="a-text-normal") or \
-                             item.find("h2")
+                # Get ALL text inside this product's grid block
+                full_item_text = item.get_text(separator=" ", strip=True).lower()
                 
-                if title_elem:
-                    title_text = title_elem.get_text(strip=True)
-                else:
-                    # Extreme fallback: pull title from the image alt-text
-                    img = item.find("img", class_="s-image")
-                    title_text = img.get("alt") if img and img.get("alt") else ""
-                    
-                if not title_text:
+                # Check 1: Must contain the core Lego number
+                if core_set_number not in full_item_text:
                     continue
                 
-                # Verify it's the correct Lego and NOT a 3rd party light kit
-                if str(lego_number) in title_text:
-                    junk_words = ["light", "led", "display", "briksmax", "lightailing", "acrylic", "box"]
-                    if any(junk in title_text.lower() for junk in junk_words):
-                        continue 
+                # Check 2: Reject junk items (like wall mounts and display cases)
+                if any(junk in full_item_text for junk in junk_words):
+                    continue 
                         
-                    target_asin = asin
+                target_asin = asin
+                
+                # Opportunistically grab search page prices as a backup
+                price_span = item.find("span", class_="a-price")
+                if price_span:
+                    off = price_span.find("span", class_="a-offscreen")
+                    if off: search_current_price = extract_price(off.get_text(strip=True))
                     
-                    # Opportunistically grab search page prices as a backup
-                    price_span = item.find("span", class_="a-price")
-                    if price_span:
-                        off = price_span.find("span", class_="a-offscreen")
-                        if off: search_current_price = extract_price(off.get_text(strip=True))
-                        
-                    orig_span = item.find("span", class_="a-text-price")
-                    if orig_span:
-                        off = orig_span.find("span", class_="a-offscreen")
-                        if off: search_original_price = extract_price(off.get_text(strip=True))
-                    elif item.find('span', {'data-a-strike': 'true'}):
-                        strike = item.find('span', {'data-a-strike': 'true'})
-                        off = strike.find('span', class_='a-offscreen')
-                        if off: search_original_price = extract_price(off.get_text(strip=True))
-                        else: search_original_price = extract_price(strike.get_text(strip=True))
+                orig_span = item.find("span", class_="a-text-price")
+                if orig_span:
+                    off = orig_span.find("span", class_="a-offscreen")
+                    if off: search_original_price = extract_price(off.get_text(strip=True))
+                elif item.find('span', {'data-a-strike': 'true'}):
+                    strike = item.find('span', {'data-a-strike': 'true'})
+                    off = strike.find('span', class_='a-offscreen')
+                    if off: search_original_price = extract_price(off.get_text(strip=True))
+                    else: search_original_price = extract_price(strike.get_text(strip=True))
 
-                    break # Target ASIN secured! Exit loop.
+                break # Target ASIN secured! Exit loop.
 
-        # Route the Target URL
-        if target_asin:
+        if target_asin and not target_url:
             target_url = f"https://www.amazon.ca/dp/{target_asin}"
         
         if not target_url:
@@ -262,7 +257,7 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
         # Step 3: Deep Link Extraction on Product Page
         if target_url != driver.current_url:
             driver.get(target_url)
-            time.sleep(random.uniform(3, 5)) # Give Javascript time to render the price and buybox
+            time.sleep(random.uniform(3, 5)) 
             soup = BeautifulSoup(driver.page_source, "html.parser")
             
         title_elem = soup.find(id="productTitle")
@@ -270,6 +265,12 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
             return result_deal 
             
         title_text = title_elem.get_text(strip=True)
+        
+        # Double check it isn't a junk item that slipped through a direct Amazon redirect
+        if any(junk in title_text.lower() for junk in junk_words):
+            print(f"❌ Blocked Junk Item for {lego_number}: {title_text[:40]}...")
+            return result_deal
+
         result_deal["theme"] = extract_lego_theme(title_text)
 
         # Name Trimming Rules
@@ -283,7 +284,7 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
         # Affiliate Link Generation
         result_deal["link"] = f"https://www.amazon.ca/dp/{target_asin}?tag={amazon_tag}" if target_asin and amazon_tag else driver.current_url
 
-        # NEW: Highly robust price extraction targeting multiple Amazon layout styles
+        # Master Price Extraction - Try Product Page First
         current_price_elem = soup.select_one('div#corePriceDisplay_desktop_feature_div span.a-price.priceToPay span.a-offscreen') or \
                              soup.select_one('div#corePrice_feature_div span.a-price span.a-offscreen') or \
                              soup.select_one('.priceToPay span.a-offscreen') or \
@@ -292,7 +293,7 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
         if current_price_elem: 
             result_deal["current_price"] = extract_price(current_price_elem.get_text(strip=True))
         else:
-            result_deal["current_price"] = search_current_price # Use Search Page Fallback
+            result_deal["current_price"] = search_current_price
 
         original_price_elem = soup.select_one('div#corePriceDisplay_desktop_feature_div span.basisPrice span.a-offscreen') or \
                               soup.select_one('.basisPrice span.a-offscreen') or \
@@ -301,7 +302,7 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
         if original_price_elem: 
             result_deal["original_price"] = extract_price(original_price_elem.get_text(strip=True))
         else:
-            result_deal["original_price"] = search_original_price # Use Search Page Fallback
+            result_deal["original_price"] = search_original_price 
 
         if result_deal["current_price"] is not None and result_deal["original_price"] is None:
             result_deal["original_price"] = result_deal["current_price"]
