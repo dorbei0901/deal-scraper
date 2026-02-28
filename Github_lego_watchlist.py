@@ -172,17 +172,22 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
             driver.get(url)
             time.sleep(random.uniform(3, 5)) 
 
-            if "captcha" in driver.current_url.lower() or "Robot Check" in driver.title:
+            if "captcha" in driver.current_url.lower() or "Robot Check" in driver.title or "Sorry!" in driver.title:
                 print(f"  ⚠️ Amazon bot check detected. Resting and clearing cookies...")
                 driver.delete_all_cookies()
                 driver.get("https://www.amazon.ca")
                 time.sleep(5)
                 continue
 
+            # NEW: Scroll down slightly to force Amazon to render images & lazy-loaded titles
+            driver.execute_script("window.scrollBy(0, 800);")
+            time.sleep(2)
+
             try:
                 # Wait universally for ANY product container to load on the page
                 WebDriverWait(driver, 8).until(
                     lambda d: "/dp/" in d.current_url or "/product/" in d.current_url or \
+                              d.find_elements(By.CSS_SELECTOR, "div[data-component-type='s-search-result']") or \
                               d.find_elements(By.CSS_SELECTOR, "div[data-asin]")
                 )
                 break 
@@ -204,15 +209,25 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
                 if not asin or len(asin) < 10:
                     continue # Skip empty grid boxes
                 
-                title_tag = item.find("h2")
-                if not title_tag:
-                    continue
+                # NEW: Catch-all title extraction to beat Amazon's changing layout
+                title_elem = item.find("span", class_="a-size-medium") or \
+                             item.find("span", class_="a-size-base-plus") or \
+                             item.find("span", class_="a-text-normal") or \
+                             item.find("h2")
+                
+                if title_elem:
+                    title_text = title_elem.get_text(strip=True)
+                else:
+                    # Extreme fallback: pull title from the image alt-text
+                    img = item.find("img", class_="s-image")
+                    title_text = img.get("alt") if img and img.get("alt") else ""
                     
-                title_text = title_tag.get_text(strip=True)
+                if not title_text:
+                    continue
                 
                 # Verify it's the correct Lego and NOT a 3rd party light kit
                 if str(lego_number) in title_text:
-                    junk_words = ["light", "led", "display", "briksmax", "lightailing", "acrylic"]
+                    junk_words = ["light", "led", "display", "briksmax", "lightailing", "acrylic", "box"]
                     if any(junk in title_text.lower() for junk in junk_words):
                         continue 
                         
@@ -268,15 +283,20 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
         # Affiliate Link Generation
         result_deal["link"] = f"https://www.amazon.ca/dp/{target_asin}?tag={amazon_tag}" if target_asin and amazon_tag else driver.current_url
 
-        # Master Price Extraction - Try Product Page First
-        current_price_elem = soup.select_one('.priceToPay span.a-offscreen') or soup.select_one('.apexPriceToPay span.a-offscreen') or soup.select_one('#corePrice_feature_div span.a-offscreen')
+        # NEW: Highly robust price extraction targeting multiple Amazon layout styles
+        current_price_elem = soup.select_one('div#corePriceDisplay_desktop_feature_div span.a-price.priceToPay span.a-offscreen') or \
+                             soup.select_one('div#corePrice_feature_div span.a-price span.a-offscreen') or \
+                             soup.select_one('.priceToPay span.a-offscreen') or \
+                             soup.select_one('.apexPriceToPay span.a-offscreen')
         
         if current_price_elem: 
             result_deal["current_price"] = extract_price(current_price_elem.get_text(strip=True))
         else:
             result_deal["current_price"] = search_current_price # Use Search Page Fallback
 
-        original_price_elem = soup.select_one('.basisPrice span.a-offscreen') or soup.select_one('span.a-text-strike') or soup.select_one('#corePriceDisplay_desktop_feature_div span.a-text-strike')
+        original_price_elem = soup.select_one('div#corePriceDisplay_desktop_feature_div span.basisPrice span.a-offscreen') or \
+                              soup.select_one('.basisPrice span.a-offscreen') or \
+                              soup.select_one('span.a-text-strike')
         
         if original_price_elem: 
             result_deal["original_price"] = extract_price(original_price_elem.get_text(strip=True))
