@@ -194,7 +194,7 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
         
-        # Determine the core 4 or 5 digit Lego number to search for (fixes multi-word lines in text file)
+        # Determine the core 4 or 5 digit Lego number to search for
         match = re.search(r'\d{4,5}', str(lego_number))
         core_set_number = match.group(0) if match else str(lego_number).lower().strip()
         
@@ -208,7 +208,6 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
         if "/dp/" in driver.current_url or "/product/" in driver.current_url:
             target_url = driver.current_url
         else:
-            # We are on the search page. Use aggressive whole-block text scanning.
             products = soup.find_all("div", attrs={"data-asin": True})
             
             for item in products:
@@ -216,34 +215,32 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
                 if not asin or len(asin) < 10:
                     continue 
                 
-                # Get ALL text inside this product's grid block
                 full_item_text = item.get_text(separator=" ", strip=True).lower()
                 
                 # Check 1: Must contain the core Lego number
                 if core_set_number not in full_item_text:
                     continue
                 
-                # Check 2: Reject junk items (like wall mounts and display cases)
+                # Check 2: Reject junk items
                 if any(junk in full_item_text for junk in junk_words):
                     continue 
                         
                 target_asin = asin
                 
-                # Opportunistically grab search page prices as a backup
+                # Opportunistically grab search page prices as a backup (Upgraded to handle missing .a-offscreen)
                 price_span = item.find("span", class_="a-price")
                 if price_span:
                     off = price_span.find("span", class_="a-offscreen")
-                    if off: search_current_price = extract_price(off.get_text(strip=True))
+                    search_current_price = extract_price(off.get_text(strip=True)) if off else extract_price(price_span.get_text(strip=True))
                     
                 orig_span = item.find("span", class_="a-text-price")
                 if orig_span:
                     off = orig_span.find("span", class_="a-offscreen")
-                    if off: search_original_price = extract_price(off.get_text(strip=True))
+                    search_original_price = extract_price(off.get_text(strip=True)) if off else extract_price(orig_span.get_text(strip=True))
                 elif item.find('span', {'data-a-strike': 'true'}):
                     strike = item.find('span', {'data-a-strike': 'true'})
                     off = strike.find('span', class_='a-offscreen')
-                    if off: search_original_price = extract_price(off.get_text(strip=True))
-                    else: search_original_price = extract_price(strike.get_text(strip=True))
+                    search_original_price = extract_price(off.get_text(strip=True)) if off else extract_price(strike.get_text(strip=True))
 
                 break # Target ASIN secured! Exit loop.
 
@@ -284,23 +281,32 @@ def scrape_single_lego_set(driver, lego_number, amazon_tag=""):
         # Affiliate Link Generation
         result_deal["link"] = f"https://www.amazon.ca/dp/{target_asin}?tag={amazon_tag}" if target_asin and amazon_tag else driver.current_url
 
-        # Master Price Extraction - Try Product Page First
-        current_price_elem = soup.select_one('div#corePriceDisplay_desktop_feature_div span.a-price.priceToPay span.a-offscreen') or \
-                             soup.select_one('div#corePrice_feature_div span.a-price span.a-offscreen') or \
-                             soup.select_one('.priceToPay span.a-offscreen') or \
-                             soup.select_one('.apexPriceToPay span.a-offscreen')
+        # Master Price Extraction - UPGRADED CATCH-ALL
+        current_price_tag = soup.select_one('div#corePriceDisplay_desktop_feature_div span.a-price.priceToPay') or \
+                            soup.select_one('div#corePriceDisplay_desktop_feature_div span.a-price') or \
+                            soup.select_one('#desktop_buybox span.a-price') or \
+                            soup.select_one('#buybox span.a-price') or \
+                            soup.select_one('#buyNewSection span.a-price') or \
+                            soup.select_one('div#corePrice_feature_div span.a-price') or \
+                            soup.select_one('.priceToPay')
         
-        if current_price_elem: 
-            result_deal["current_price"] = extract_price(current_price_elem.get_text(strip=True))
+        if current_price_tag:
+            offscreen = current_price_tag.select_one('span.a-offscreen')
+            text_to_extract = offscreen.get_text(strip=True) if offscreen else current_price_tag.get_text(strip=True)
+            result_deal["current_price"] = extract_price(text_to_extract)
         else:
             result_deal["current_price"] = search_current_price
 
-        original_price_elem = soup.select_one('div#corePriceDisplay_desktop_feature_div span.basisPrice span.a-offscreen') or \
-                              soup.select_one('.basisPrice span.a-offscreen') or \
-                              soup.select_one('span.a-text-strike')
-        
-        if original_price_elem: 
-            result_deal["original_price"] = extract_price(original_price_elem.get_text(strip=True))
+        original_price_tag = soup.select_one('div#corePriceDisplay_desktop_feature_div span.basisPrice') or \
+                             soup.select_one('#desktop_buybox span.basisPrice') or \
+                             soup.select_one('#buybox span.basisPrice') or \
+                             soup.select_one('.basisPrice') or \
+                             soup.select_one('span.a-text-strike')
+                             
+        if original_price_tag: 
+            offscreen = original_price_tag.select_one('span.a-offscreen')
+            text_to_extract = offscreen.get_text(strip=True) if offscreen else original_price_tag.get_text(strip=True)
+            result_deal["original_price"] = extract_price(text_to_extract)
         else:
             result_deal["original_price"] = search_original_price 
 
