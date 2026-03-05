@@ -29,6 +29,9 @@ def load_lego_themes(filename="legoproduct.txt"):
         themes = [line.strip() for line in file if line.strip()]
     return themes if themes else [""]
 
+def format_price(price):
+    return f"${price:.2f}" if price is not None else "N/A"
+
 def send_email_report(deals):
     """Generates an HTML table and sends it via email securely."""
     sender_email = os.getenv("GMAIL_ADDRESS")
@@ -121,7 +124,6 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    # DO NOT set a custom user-agent here. Let undetected_chromedriver sync it natively with the Chrome binary to avoid mismatch detection.
 
     driver = uc.Chrome(options=options, version_main=144)
     all_discounted_products = []
@@ -138,9 +140,8 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
             kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
             url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}"
             
-            print(f"🔍 Navigating to: {url}")
+            print(f"\n🔍 Navigating to: {url}")
             
-            # Evasion Loop: Try up to 3 times to bypass PerimeterX per page
             page_loaded_successfully = False
             for px_attempt in range(3):
                 driver.get(url)
@@ -149,10 +150,10 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
                 if "Press & Hold" in driver.page_source or "px-captcha" in driver.page_source:
                     print(f"⚠️ PerimeterX detected on attempt {px_attempt + 1}. Clearing cookies and waiting...")
                     driver.delete_all_cookies()
-                    time.sleep(random.uniform(8, 15)) # Wait out the temporary IP ban
+                    time.sleep(random.uniform(8, 15)) 
                 else:
                     page_loaded_successfully = True
-                    break # Successfully bypassed!
+                    break 
 
             if not page_loaded_successfully:
                 print(f"❌ Failed to bypass Walmart PerimeterX bot detection. Skipping page {page_number}.")
@@ -164,7 +165,10 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
             soup = BeautifulSoup(driver.page_source, "html.parser")
             product_links = soup.find_all("a", href=re.compile(r"/ip/"))
             
+            print(f"🛠️ [DEBUG] Total /ip/ product links found in HTML on Page {page_number}: {len(product_links)}")
+            
             if not product_links:
+                print("🛠️ [DEBUG] No product links found. Walmart might have served a blank grid or changed their HTML structure.")
                 break
 
             processed_urls = set()
@@ -209,6 +213,15 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
                 elif len(unique_prices) == 1:
                     current_price = unique_prices[0]
                     original_price = current_price
+
+                # Calculate temporary discount for debug output
+                debug_discount = 0.0
+                if current_price and original_price and original_price > current_price:
+                    debug_discount = round(((original_price - current_price) / original_price) * 100, 1)
+
+                # DEBUG PRINT: Shows exactly what the bot sees for every single item
+                short_title = (title_text[:45] + '...') if len(title_text) > 45 else title_text
+                print(f"👀 [RAW] {short_title:<48} | Curr: {format_price(current_price):<8} | Orig: {format_price(original_price):<8} | Disc: {debug_discount}%")
 
                 if current_price and original_price and original_price > current_price:
                     discount = round(((original_price - current_price) / original_price) * 100, 1)
@@ -305,7 +318,7 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
 def main():
     print("🔎 Walmart LEGO Discount Scraper (GitHub Actions Edition)")
     
-    min_discount_percent = 20 # Updated to 20%
+    min_discount_percent = 20 
     min_original_price = 50
 
     themes = load_lego_themes()
