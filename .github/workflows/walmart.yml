@@ -30,4 +30,4 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
-        run: python Affiliate_Walmart_Github.py
+        run: python Github_lego_Walmart_scraper.py
