@@ -1,6 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# In[2]:
+
+
+#!/usr/bin/env python
+# coding: utf-8
+
 import time
 import re
 import os
@@ -189,35 +195,40 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
         soup = BeautifulSoup(driver.page_source, "html.parser")
         products = soup.find_all("div", {"data-component-type": "s-search-result"})
 
-        # ENHANCEMENT: Increased search depth from 5 to 15 to bypass sponsored items
-        for item in products[:15]:
-            title_h2 = item.find("h2")
-            if not title_h2:
-                continue
-                
-            link_tag = title_h2.find("a", class_="a-link-normal")
-            if not link_tag:
-                continue
+        for item in products[:5]:
+            title_text = "N/A"
+            link = url
+            
+            link_tag = item.find("a", class_="a-link-normal s-line-clamp-4 s-link-style a-text-normal")
+            if link_tag:
+                title_tag = link_tag.find("h2")
+                title_text = title_tag.get_text(strip=True) if title_tag else "N/A"
+                link = "https://www.amazon.ca" + link_tag.get("href", "")
+            else: 
+                title_h2 = item.find("h2")
+                if title_h2:
+                    link_tag_fallback = title_h2.find("a", class_="a-link-normal")
+                    if link_tag_fallback:
+                        title_span = link_tag_fallback.find("span", class_="a-text-normal")
+                        title_text = title_span.get_text(strip=True) if title_span else "N/A"
+                        relative_link = link_tag_fallback.get("href", "")
+                        link = "https://www.amazon.ca" + relative_link if not relative_link.startswith("http") else relative_link
 
-            title_text = title_h2.get_text(strip=True)
-            relative_link = link_tag.get("href", "")
-            link = "https://www.amazon.ca" + relative_link if not relative_link.startswith("http") else relative_link
-
-            # ENHANCEMENT: Check if the LEGO number is in the title OR the URL
-            if str(lego_number) in title_text or str(lego_number) in link:
-                
+            # Validate it's the right item
+            if lego_number in title_text:
+                # AMENDMENT 1: Trim the name before " - "
                 if " - " in title_text:
                     title_text = title_text.split(" - ")[0].strip()
                 
                 result_deal["title"] = title_text
                 
+                # Format affiliate link
                 if amazon_tag and "slredirect.amazon.ca" not in link:
                     separator = "&" if "?" in link else "?"
                     result_deal["link"] = f"{link}{separator}tag={amazon_tag}"
                 else:
                     result_deal["link"] = link
 
-                # Try grabbing prices from the search page
                 current_price_span = item.find("span", class_="a-price")
                 if current_price_span:
                     offscreen = current_price_span.find("span", class_="a-offscreen")
@@ -237,28 +248,19 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                     else:
                         result_deal["original_price"] = extract_price(strike_tag.get_text(strip=True))
 
-                # Visit the product page to get Shipper, Seller, and fallback Price
+                if result_deal["current_price"] is not None and result_deal["original_price"] is None:
+                    result_deal["original_price"] = result_deal["current_price"]
+
+                if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
+                    result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
+
+                # AMENDMENT 2: Visit the product page to get Shipper & Seller
                 try:
                     driver.get(link)
                     time.sleep(3)
                     prod_soup = BeautifulSoup(driver.page_source, "html.parser")
                     
-                    # ENHANCEMENT: If price wasn't on the search page, look for it on the product page
-                    if result_deal["current_price"] is None:
-                        core_price_div = prod_soup.find("div", id="corePrice_feature_div")
-                        if core_price_div:
-                            price_span = core_price_div.find("span", class_="a-offscreen")
-                            if price_span:
-                                result_deal["current_price"] = extract_price(price_span.get_text(strip=True))
-
-                    # Calculate discount now that we might have found a fallback price
-                    if result_deal["current_price"] is not None and result_deal["original_price"] is None:
-                        result_deal["original_price"] = result_deal["current_price"]
-
-                    if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
-                        result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
-
-                    # Extract Shipper and Seller
+                    # Look for the newer tabular buy box layout
                     ships_from_div = prod_soup.find("div", {"tabular-attribute-name": "Ships from"})
                     if ships_from_div:
                         val = ships_from_div.find_next_sibling("div")
@@ -269,6 +271,7 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                         val = sold_by_div.find_next_sibling("div")
                         if val: result_deal["seller"] = val.get_text(strip=True)
                         
+                    # Fallback for the older text-based buy box
                     if result_deal["shipper"] == "N/A" and result_deal["seller"] == "N/A":
                         merchant_info = prod_soup.find("div", id="merchant-info")
                         if merchant_info:
@@ -277,7 +280,7 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                                 result_deal["shipper"] = "Amazon.ca"
                                 result_deal["seller"] = "Amazon.ca"
                             else:
-                                result_deal["seller"] = merchant_text[:40] + "..." 
+                                result_deal["seller"] = merchant_text[:40] + "..." # Captures third-party details
                 except Exception as e:
                     print(f"  ⚠️ Could not load Shipper/Seller info for {lego_number}: {e}")
 
@@ -315,3 +318,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# In[ ]:
+
+
+
+
