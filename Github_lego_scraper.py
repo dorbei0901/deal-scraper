@@ -124,7 +124,8 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 
-    driver = uc.Chrome(options=options, version_main=144)
+    # UPDATED: Changed version_main to 146 to match GitHub Actions latest browser environment
+    driver = uc.Chrome(options=options, version_main=146)
     all_discounted_products = []
     page_number = 1
     max_retries = 5 
