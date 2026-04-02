@@ -125,7 +125,7 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-blink-features=AutomationControlled")
 
-    driver = uc.Chrome(options=options, version_main=144)
+    driver = uc.Chrome(options=options, version_main=146)
     all_discounted_products = []
     page_number = 1
     max_pages = 4 
