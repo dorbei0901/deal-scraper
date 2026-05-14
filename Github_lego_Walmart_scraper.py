@@ -61,33 +61,27 @@ def get_proxied_page(target_url, max_retries=3):
     return None
 
 def safe_extract_price(element):
-    """Strictly extracts price from an element, checking aria-labels first to avoid formatting errors."""
     if not element:
         return None
-        
-    # Walmart often hides the clean price inside the aria-label (e.g. "Current price is $149.99")
     aria = element.get('aria-label')
     if aria and '$' in aria:
         match = re.search(r'\$\s*(\d+\.?\d*)', aria)
         if match: 
             return float(match.group(1))
-            
-    # Fallback to standard text extraction
     text = element.get_text(separator=".", strip=True)
     clean_text = re.sub(r'[^\d\.]', '', text)
-    
-    # Check for proper decimal formatting
     match = re.search(r'(\d+\.\d{2})', clean_text)
-    if match:
-        return float(match.group(1))
-        
-    # Fallback for whole numbers without decimals
+    if match: return float(match.group(1))
     match2 = re.search(r'(\d+)', clean_text)
-    if match2:
-        return float(match2.group(1))
-        
+    if match2: return float(match2.group(1))
     return None
 
+def extract_price_from_text(text):
+    clean_text = text.replace('CDN$', '').replace('$', '').replace(',', '').strip()
+    match = re.search(r'(\d+\.?\d*)', clean_text)
+    return float(match.group(1)) if match else None
+
+# CHANGED: Updated default filename to legoproductTest.txt
 def load_lego_themes(filename="legoproductTest.txt"):
     if not os.path.exists(filename):
         print_time(f"⚠️ {filename} not found. Defaulting to general LEGO search.")
@@ -147,194 +141,4 @@ def send_email_report(deals):
         <td>${deal['current_price']:.2f}</td>
         <td>${deal['original_price']:.2f}</td>
         <td style="color: red; font-weight: bold;">{deal['discount']}%</td>
-        <td>{deal.get('seller', 'N/A')}</td>
-        <td><a href="{deal['link']}">View Deal</a></td>
-      </tr>
-        """
-        
-    html += "</table></body></html>"
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Walmart LEGO Deals - {len(deals)} Great Discounts Found!"
-    msg["From"] = sender_email
-    msg["To"] = recipient_email
-    msg.attach(MIMEText(html, "html"))
-
-    try:
-        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-        server.login(sender_email, sender_password)
-        server.sendmail(sender_email, recipient_email, msg.as_string())
-        server.quit()
-        print_time(f"✅ Email successfully sent to {recipient_email}")
-    except Exception as e:
-        print_time(f"❌ Failed to send email: {e}")
-
-def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_price=50.0):
-    all_discounted_products = []
-    
-    page_number = 1
-    max_pages = 2 
-    
-    while page_number <= max_pages:
-        kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
-        url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}"
-        
-        print_time(f"🔍 Fetching Raw HTML for Walmart Search Page {page_number}...")
-        html_content = get_proxied_page(url)
-        
-        if not html_content:
-            print_time(f"❌ Failed to fetch search page {page_number}. Moving to next.")
-            page_number += 1
-            continue
-
-        soup = BeautifulSoup(html_content, "html.parser")
-        product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "/en/ip/" in href))
-        
-        print_time(f"🛠️ [DEBUG] Total product links found in raw HTML: {len(product_links)}")
-        
-        if not product_links:
-            break
-
-        processed_urls = set()
-
-        for link in product_links:
-            href = link.get("href")
-            if not href or href in processed_urls:
-                continue
-            processed_urls.add(href)
-
-            parent = link.find_parent(attrs={"data-automation": "product"}) 
-            if not parent:
-                parent = link.find_parent("div", attrs={"data-testid": "item-stack"}) or link.parent.parent.parent
-
-            if not parent: continue
-
-            title_text = link.get_text(strip=True)
-            if not title_text or len(title_text) < 5 or "lego" not in title_text.lower():
-                img = link.find("img")
-                title_text = img.get("alt", "") if img else ""
-                if not title_text:
-                    continue
-
-            # Strict Price DOM Targeting
-            curr_elem = parent.find(attrs={"data-automation": "current-price"}) or parent.find(attrs={"data-automation": "buybox-price"})
-            orig_elem = parent.find(attrs={"data-automation": "strike-through-price"}) or parent.find(attrs={"data-automation": "regular-price"})
-
-            current_price = safe_extract_price(curr_elem)
-            original_price = safe_extract_price(orig_elem)
-
-            # If we don't have a definitive current price, skip the item entirely to prevent hallucination
-            if current_price is None:
-                continue
-                
-            if original_price is None:
-                original_price = current_price
-
-            if original_price > current_price:
-                discount = round(((original_price - current_price) / original_price) * 100, 1)
-
-                if discount >= min_discount_percent and original_price >= min_original_price:
-                    if " - " in title_text: title_text = title_text.split(" - ")[0].strip()
-                    if len(title_text) > 60: title_text = title_text[:60].strip() + "..."
-                    
-                    full_link = href if href.startswith("http") else "https://www.walmart.ca" + href
-                    
-                    all_discounted_products.append({
-                        "title": title_text,
-                        "current_price": current_price,
-                        "original_price": original_price,
-                        "discount": discount,
-                        "link": full_link.split('?')[0], 
-                        "raw_link": full_link,
-                        "theme": keyword if keyword else "General LEGO" 
-                    })
-
-        page_number += 1
-
-    final_verified_deals = []
-    
-    if all_discounted_products:
-        print_time(f"📦 Found {len(all_discounted_products)} potentially qualified items. Fetching product pages...")
-        
-        for index, deal in enumerate(all_discounted_products):
-            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Fetching details for: {deal['title'][:30]}...")
-            
-            html_content = get_proxied_page(deal["raw_link"])
-            
-            if not html_content:
-                print_time("  ❌ Failed to load product page.")
-                continue
-
-            prod_soup = BeautifulSoup(html_content, "html.parser")
-            clean_page_text = prod_soup.get_text(separator=" ", strip=True)
-            
-            # Double Verify Price on Product Page
-            curr_elem = prod_soup.find(attrs={"data-automation": "buybox-price"}) or prod_soup.find(attrs={"data-automation": "current-price"})
-            orig_elem = prod_soup.find(attrs={"data-automation": "strike-through-price"}) or prod_soup.find(attrs={"data-automation": "regular-price"})
-
-            new_curr = safe_extract_price(curr_elem)
-            new_orig = safe_extract_price(orig_elem)
-
-            if new_curr: deal["current_price"] = new_curr
-            if new_orig: deal["original_price"] = new_orig
-
-            if deal["original_price"] > deal["current_price"]:
-                deal["discount"] = round(((deal["original_price"] - deal["current_price"]) / deal["original_price"]) * 100, 1)
-
-            # Strict Seller Validation
-            seller_val = "N/A"
-            match = re.search(r'Sold and shipped by\s+([^\\.\n]*?)(?:\s+Fulfilled by|\s+Return|\s+Free delivery|$)', clean_page_text)
-            
-            if match:
-                seller_val = match.group(1).strip()
-                seller_val = re.sub(r'\|.*', '', seller_val).strip() 
-            elif "Sold by Walmart" in clean_page_text or "shipped by Walmart" in clean_page_text:
-                seller_val = "Walmart.ca"
-            else:
-                seller_elem = prod_soup.find(attrs={"data-automation": "seller-name"})
-                if seller_elem: seller_val = seller_elem.get_text(strip=True)
-
-            if "Walmart" in seller_val: seller_val = "Walmart.ca"
-            deal["seller"] = seller_val
-
-            if deal["seller"] != "Walmart.ca":
-                print_time(f"  ❌ Dropped: Sold by 3rd Party ({deal['seller']})")
-                continue
-
-            if deal["discount"] >= min_discount_percent:
-                final_verified_deals.append(deal)
-                print_time(f"  ✅ Verified Deal: {deal['discount']}% off! Seller: Walmart")
-            else:
-                print_time(f"  ❌ Dropped: Discount fell to {deal['discount']}% on product page.")
-
-    print_time(f"--- Scrape Complete for {keyword if keyword else 'All LEGO'} ---")
-    return final_verified_deals
-
-def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (Raw API Edition)")
-    
-    min_discount_percent = 30.0 
-    min_original_price = 50.0
-
-    themes = load_lego_themes()
-    master_deal_list = []
-    
-    for theme in themes:
-        display_name = theme if theme else "All LEGO"
-        print(f"\n{'='*50}")
-        print_time(f"🚀 STARTING RAW SEARCH FOR: {display_name.upper()}")
-        print(f"{'='*50}")
-        
-        found_deals = scrape_walmart_lego(keyword=theme, 
-                                          min_discount_percent=min_discount_percent, 
-                                          min_original_price=min_original_price)
-        if found_deals:
-            master_deal_list.extend(found_deals)
-
-    if master_deal_list:
-        master_deal_list.sort(key=lambda x: x["discount"], reverse=True)
-    
-    send_email_report(master_deal_list)
-
-if __name__ == "__main__":
-    main()
+        <td>{deal.get('seller', 'N/A')}
