@@ -16,7 +16,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
 def extract_price(text):
-    """Extracts a float price from a text string, handling commas and currency symbols."""
     clean_text = text.replace('CDN$', '').replace('$', '').replace(',', '').strip()
     match = re.search(r'(\d+\.?\d*)', clean_text)
     return float(match.group(1)) if match else None
@@ -33,7 +32,6 @@ def format_price(price):
     return f"${price:.2f}" if price is not None else "N/A"
 
 def send_email_report(deals):
-    """Generates an HTML table and sends it via email securely."""
     sender_email = os.getenv("GMAIL_ADDRESS")
     sender_password = os.getenv("GMAIL_APP_PASSWORD")
     recipient_email = os.getenv("RECIPIENT_EMAIL")
@@ -54,7 +52,7 @@ def send_email_report(deals):
     <style>
       table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }
       th, td { text-align: left; padding: 8px; border: 1px solid #ddd; }
-      th { background-color: #f2f2f2; color: #0071ce; } /* Walmart Blue */
+      th { background-color: #f2f2f2; color: #0071ce; } 
       tr:nth-child(even) {background-color: #f9f9f9;}
       a { color: #0066c0; text-decoration: none; font-weight: bold; }
       a:hover { text-decoration: underline; }
@@ -111,21 +109,45 @@ def send_email_report(deals):
         print(f"❌ Failed to send email: {e}")
 
 def human_like_scroll(driver):
-    """Simulates jittery, human-like scrolling to bypass behavior tracking."""
-    for _ in range(random.randint(3, 5)):
-        scroll_amount = random.randint(300, 700)
+    for _ in range(random.randint(3, 6)):
+        scroll_amount = random.randint(200, 600)
         driver.execute_script(f"window.scrollBy(0, {scroll_amount});")
-        time.sleep(random.uniform(0.5, 1.8))
+        time.sleep(random.uniform(0.7, 2.0))
 
-def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_original_price=50.0):
+def create_stealth_driver():
+    """Generates a fresh browser with randomized stealth parameters to beat 403 Forbidden blocks."""
     options = uc.ChromeOptions()
     options.add_argument("--headless=new") 
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
+    
+    # Randomize viewport size
+    width = random.choice([1366, 1440, 1536, 1920])
+    height = random.choice([768, 900, 864, 1080])
+    options.add_argument(f"--window-size={width},{height}")
+    
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--disable-popup-blocking")
+    
+    # Randomize User-Agent slightly to avoid fingerprinting
+    chrome_versions = ["120.0.0.0", "121.0.0.0", "122.0.0.0", "123.0.0.0"]
+    v = random.choice(chrome_versions)
+    options.add_argument(f"--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{v} Safari/537.36")
 
     driver = uc.Chrome(options=options, version_main=146)
+    
+    # Inject JavaScript to hide webdriver flags
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            })
+        """
+    })
+    return driver
+
+def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_original_price=50.0):
+    driver = create_stealth_driver()
     all_discounted_products = []
     page_number = 1
     max_pages = 4 
@@ -133,7 +155,7 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
     try:
         print("🍪 Warming up session cookies to bypass Walmart WAF...")
         driver.get("https://www.walmart.ca")
-        time.sleep(random.uniform(5, 8)) 
+        time.sleep(random.uniform(6, 10)) 
         human_like_scroll(driver)
         
         while page_number <= max_pages:
@@ -143,45 +165,46 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
             print(f"\n🔍 Navigating to: {url}")
             
             page_loaded_successfully = False
-            for px_attempt in range(3):
+            for px_attempt in range(4): # Increased retry limit
                 driver.get(url)
-                time.sleep(random.uniform(6, 10)) 
+                time.sleep(random.uniform(7, 12)) 
 
-                if "Press & Hold" in driver.page_source or "px-captcha" in driver.page_source:
-                    print(f"⚠️ PerimeterX detected on attempt {px_attempt + 1}. Clearing cookies and waiting...")
-                    driver.delete_all_cookies()
-                    time.sleep(random.uniform(8, 15)) 
+                page_text = driver.page_source
+                
+                # Check for Hard 403 Forbidden OR Soft Captcha
+                if "Forbidden" in page_text[:500] or "Press & Hold" in page_text or "px-captcha" in page_text:
+                    print(f"⚠️ WAF Block (Forbidden/Captcha) on attempt {px_attempt + 1}. Rebooting browser session...")
+                    driver.quit() # Completely destroy the burned browser
+                    time.sleep(random.uniform(10, 20)) # Wait out the throttle
+                    driver = create_stealth_driver() # Rebuild with new fingerprint
+                    driver.get("https://www.walmart.ca") # Rewarm
+                    time.sleep(5)
                 else:
                     page_loaded_successfully = True
                     break 
 
             if not page_loaded_successfully:
-                print(f"❌ Failed to bypass Walmart PerimeterX bot detection. Skipping page {page_number}.")
+                print(f"❌ Network permanently blocked by Walmart WAF. Skipping page {page_number}.")
                 page_number += 1
                 continue
 
-            # Wait for products to load dynamically
             try:
                 WebDriverWait(driver, 10).until(
                     lambda d: d.find_elements(By.CSS_SELECTOR, 'a[href*="/ip/"]') or \
                               d.find_elements(By.CSS_SELECTOR, '[data-automation="product"]')
                 )
             except TimeoutException:
-                print("  ⚠️ Timeout waiting for products to render. Page might be empty or soft-blocked.")
+                pass # Continue anyway, the DOM might just be slow
 
             human_like_scroll(driver)
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
-            
-            # Use broad CSS selector for product links to beat HTML changes
             product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "/en/ip/" in href))
             
-            print(f"🛠️ [DEBUG] Page Title: {driver.title}")
             print(f"🛠️ [DEBUG] Total /ip/ product links found on Page {page_number}: {len(product_links)}")
             
             if not product_links:
-                print("🛠️ [DEBUG] No product links found. Extracting page sample for debugging:")
-                print(soup.get_text(separator=" ", strip=True)[:500] + "...")
+                print("🛠️ [DEBUG] No links found. Walmart served an empty grid.")
                 break
 
             processed_urls = set()
@@ -192,15 +215,12 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
                     continue
                 processed_urls.add(href)
 
-                # Find the main product container holding this link
                 parent = link.find_parent(attrs={"data-automation": "product"}) 
                 if not parent:
-                    # Fallback if data-automation is removed
                     parent = link.find_parent("div", attrs={"data-testid": "item-stack"}) or link.parent.parent.parent
 
                 if not parent: continue
 
-                # Extract Title
                 title_text = link.get_text(strip=True)
                 if not title_text or len(title_text) < 5 or "lego" not in title_text.lower():
                     img = link.find("img")
@@ -208,7 +228,6 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
                     if not title_text:
                         continue
 
-                # Targeted Price Extraction
                 current_price = None
                 original_price = None
 
@@ -221,7 +240,6 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
                 if orig_elem:
                     original_price = extract_price(orig_elem.get_text(strip=True))
 
-                # Fallback Regex Price Extraction if tags are missing
                 if current_price is None:
                     text_content = parent.get_text(separator=" ", strip=True)
                     prices = re.findall(r'\$\d+\.\d{2}|\$\d+', text_content)
@@ -239,7 +257,6 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
                         current_price = unique_prices[0]
                         original_price = current_price
 
-                # Calculate temporary discount for debug output
                 debug_discount = 0.0
                 if current_price and original_price and original_price > current_price:
                     debug_discount = round(((original_price - current_price) / original_price) * 100, 1)
@@ -270,7 +287,6 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
 
             page_number += 1
 
-        # Phase 2: Visit Qualified Items to fetch exact Seller/Shipper data
         final_verified_deals = []
         
         if all_discounted_products:
@@ -281,14 +297,14 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
                     driver.get(deal["raw_link"])
                     time.sleep(random.uniform(5, 9)) 
                     
-                    if "Press & Hold" in driver.page_source or "px-captcha" in driver.page_source:
+                    page_text = driver.page_source
+                    if "Forbidden" in page_text[:500] or "Press & Hold" in page_text or "px-captcha" in page_text:
                         print(f"  ⚠️ Bot block hit on product page for {deal['title'][:20]}... Skipping item.")
                         continue
 
-                    prod_soup = BeautifulSoup(driver.page_source, "html.parser")
-                    page_text = prod_soup.get_text(separator=" ", strip=True)
+                    prod_soup = BeautifulSoup(page_text, "html.parser")
+                    clean_page_text = prod_soup.get_text(separator=" ", strip=True)
                     
-                    # Ensure price hasn't changed on product page
                     curr_elem = prod_soup.find(attrs={"data-automation": "buybox-price"})
                     orig_elem = prod_soup.find(attrs={"data-automation": "strike-through-price"})
 
@@ -303,14 +319,13 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
                     if deal["original_price"] > deal["current_price"]:
                         deal["discount"] = round(((deal["original_price"] - deal["current_price"]) / deal["original_price"]) * 100, 1)
 
-                    # Seller Extraction
-                    match = re.search(r'Sold and shipped by\s+([^\\.\n]*?)(?:\s+Fulfilled by|\s+Return|\s+Free delivery|$)', page_text)
+                    match = re.search(r'Sold and shipped by\s+([^\\.\n]*?)(?:\s+Fulfilled by|\s+Return|\s+Free delivery|$)', clean_page_text)
                     if match:
                         seller_val = match.group(1).strip()
                         seller_val = re.sub(r'\|.*', '', seller_val).strip() 
                         deal["shipper"] = seller_val
                         deal["seller"] = seller_val
-                    elif "Sold by Walmart" in page_text or "shipped by Walmart" in page_text:
+                    elif "Sold by Walmart" in clean_page_text or "shipped by Walmart" in clean_page_text:
                         deal["shipper"] = "Walmart.ca"
                         deal["seller"] = "Walmart.ca"
                     else:
@@ -322,7 +337,6 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
                     if "Walmart" in deal["shipper"]: deal["shipper"] = "Walmart.ca"
                     if "Walmart" in deal["seller"]: deal["seller"] = "Walmart.ca"
 
-                    # STRICT WALMART FILTER & DISCOUNT FILTER
                     if deal["seller"] != "Walmart.ca":
                         print(f"❌ Dropped: {deal['title'][:40]}... (Sold by 3rd Party: {deal['seller']})")
                         continue
@@ -349,7 +363,6 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_orig
 def main():
     print("🔎 Walmart LEGO Discount Scraper (GitHub Actions Edition)")
     
-    # Strictly set to 30% discount requirement
     min_discount_percent = 30.0 
     min_original_price = 50.0
 
