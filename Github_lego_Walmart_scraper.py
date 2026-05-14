@@ -16,7 +16,7 @@ def extract_price(text):
     match = re.search(r'(\d+\.?\d*)', clean_text)
     return float(match.group(1)) if match else None
 
-def load_lego_themes(filename="legoproduct.txt"):
+def load_lego_themes(filename="legoproductTest.txt"):
     if not os.path.exists(filename):
         print(f"⚠️ {filename} not found. Defaulting to general LEGO search.")
         return [""] 
