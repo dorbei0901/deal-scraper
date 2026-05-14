@@ -117,7 +117,7 @@ def human_like_scroll(driver):
         driver.execute_script(f"window.scrollBy(0, {scroll_amount});")
         time.sleep(random.uniform(0.5, 1.8))
 
-def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_original_price=50.0):
+def scrape_walmart_lego_selenium(keyword="", min_discount_percent=30.0, min_original_price=50.0):
     options = uc.ChromeOptions()
     options.add_argument("--headless=new") 
     options.add_argument("--no-sandbox")
@@ -160,15 +160,28 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
                 page_number += 1
                 continue
 
+            # Wait for products to load dynamically
+            try:
+                WebDriverWait(driver, 10).until(
+                    lambda d: d.find_elements(By.CSS_SELECTOR, 'a[href*="/ip/"]') or \
+                              d.find_elements(By.CSS_SELECTOR, '[data-automation="product"]')
+                )
+            except TimeoutException:
+                print("  ⚠️ Timeout waiting for products to render. Page might be empty or soft-blocked.")
+
             human_like_scroll(driver)
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
-            product_links = soup.find_all("a", href=re.compile(r"/ip/"))
             
-            print(f"🛠️ [DEBUG] Total /ip/ product links found in HTML on Page {page_number}: {len(product_links)}")
+            # Use broad CSS selector for product links to beat HTML changes
+            product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "/en/ip/" in href))
+            
+            print(f"🛠️ [DEBUG] Page Title: {driver.title}")
+            print(f"🛠️ [DEBUG] Total /ip/ product links found on Page {page_number}: {len(product_links)}")
             
             if not product_links:
-                print("🛠️ [DEBUG] No product links found. Walmart might have served a blank grid or changed their HTML structure.")
+                print("🛠️ [DEBUG] No product links found. Extracting page sample for debugging:")
+                print(soup.get_text(separator=" ", strip=True)[:500] + "...")
                 break
 
             processed_urls = set()
@@ -179,47 +192,58 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
                     continue
                 processed_urls.add(href)
 
-                parent = link.parent
-                for _ in range(3): 
-                    if parent and parent.parent:
-                        parent = parent.parent
-                        
+                # Find the main product container holding this link
+                parent = link.find_parent(attrs={"data-automation": "product"}) 
+                if not parent:
+                    # Fallback if data-automation is removed
+                    parent = link.find_parent("div", attrs={"data-testid": "item-stack"}) or link.parent.parent.parent
+
                 if not parent: continue
 
-                text_content = parent.get_text(separator=" ", strip=True)
+                # Extract Title
                 title_text = link.get_text(strip=True)
-
                 if not title_text or len(title_text) < 5 or "lego" not in title_text.lower():
                     img = link.find("img")
-                    if img and img.get("alt"):
-                        title_text = img.get("alt")
-                    else:
+                    title_text = img.get("alt", "") if img else ""
+                    if not title_text:
                         continue
 
-                prices = re.findall(r'\$\d+\.\d{2}|\$\d+', text_content)
-                unique_prices = []
-                for p in prices:
-                    val = extract_price(p)
-                    if val and val not in unique_prices:
-                        unique_prices.append(val)
-
+                # Targeted Price Extraction
                 current_price = None
                 original_price = None
 
-                if len(unique_prices) >= 2:
-                    unique_prices.sort()
-                    current_price = unique_prices[0]
-                    original_price = unique_prices[-1]
-                elif len(unique_prices) == 1:
-                    current_price = unique_prices[0]
-                    original_price = current_price
+                curr_elem = parent.find(attrs={"data-automation": "current-price"})
+                orig_elem = parent.find(attrs={"data-automation": "strike-through-price"})
+
+                if curr_elem:
+                    current_price = extract_price(curr_elem.get_text(strip=True))
+                
+                if orig_elem:
+                    original_price = extract_price(orig_elem.get_text(strip=True))
+
+                # Fallback Regex Price Extraction if tags are missing
+                if current_price is None:
+                    text_content = parent.get_text(separator=" ", strip=True)
+                    prices = re.findall(r'\$\d+\.\d{2}|\$\d+', text_content)
+                    unique_prices = []
+                    for p in prices:
+                        val = extract_price(p)
+                        if val and val not in unique_prices:
+                            unique_prices.append(val)
+
+                    if len(unique_prices) >= 2:
+                        unique_prices.sort()
+                        current_price = unique_prices[0]
+                        original_price = unique_prices[-1]
+                    elif len(unique_prices) == 1:
+                        current_price = unique_prices[0]
+                        original_price = current_price
 
                 # Calculate temporary discount for debug output
                 debug_discount = 0.0
                 if current_price and original_price and original_price > current_price:
                     debug_discount = round(((original_price - current_price) / original_price) * 100, 1)
 
-                # DEBUG PRINT: Shows exactly what the bot sees for every single item
                 short_title = (title_text[:45] + '...') if len(title_text) > 45 else title_text
                 print(f"👀 [RAW] {short_title:<48} | Curr: {format_price(current_price):<8} | Orig: {format_price(original_price):<8} | Disc: {debug_discount}%")
 
@@ -250,7 +274,7 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
         final_verified_deals = []
         
         if all_discounted_products:
-            print(f"\n📦 Fetching Shipper & Seller info for {len(all_discounted_products)} qualified items...")
+            print(f"\n📦 Fetching Seller info for {len(all_discounted_products)} qualified items (Walmart Only)...")
             
             for deal in all_discounted_products:
                 try:
@@ -264,6 +288,7 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
                     prod_soup = BeautifulSoup(driver.page_source, "html.parser")
                     page_text = prod_soup.get_text(separator=" ", strip=True)
                     
+                    # Ensure price hasn't changed on product page
                     curr_elem = prod_soup.find(attrs={"data-automation": "buybox-price"})
                     orig_elem = prod_soup.find(attrs={"data-automation": "strike-through-price"})
 
@@ -278,6 +303,7 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
                     if deal["original_price"] > deal["current_price"]:
                         deal["discount"] = round(((deal["original_price"] - deal["current_price"]) / deal["original_price"]) * 100, 1)
 
+                    # Seller Extraction
                     match = re.search(r'Sold and shipped by\s+([^\\.\n]*?)(?:\s+Fulfilled by|\s+Return|\s+Free delivery|$)', page_text)
                     if match:
                         seller_val = match.group(1).strip()
@@ -296,9 +322,14 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
                     if "Walmart" in deal["shipper"]: deal["shipper"] = "Walmart.ca"
                     if "Walmart" in deal["seller"]: deal["seller"] = "Walmart.ca"
 
+                    # STRICT WALMART FILTER & DISCOUNT FILTER
+                    if deal["seller"] != "Walmart.ca":
+                        print(f"❌ Dropped: {deal['title'][:40]}... (Sold by 3rd Party: {deal['seller']})")
+                        continue
+
                     if deal["discount"] >= min_discount_percent:
                         final_verified_deals.append(deal)
-                        print(f"✅ Verified: {deal['title'][:40]}... | Discount: {deal['discount']}% | Seller: {deal['seller']}")
+                        print(f"✅ Verified: {deal['title'][:40]}... | Discount: {deal['discount']}% | Seller: Walmart")
                     else:
                         print(f"❌ Dropped: {deal['title'][:40]}... (Discount fell to {deal['discount']}%)")
 
@@ -318,8 +349,9 @@ def scrape_walmart_lego_selenium(keyword="", min_discount_percent=20.0, min_orig
 def main():
     print("🔎 Walmart LEGO Discount Scraper (GitHub Actions Edition)")
     
-    min_discount_percent = 20 
-    min_original_price = 50
+    # Strictly set to 30% discount requirement
+    min_discount_percent = 30.0 
+    min_original_price = 50.0
 
     themes = load_lego_themes()
     master_deal_list = []
