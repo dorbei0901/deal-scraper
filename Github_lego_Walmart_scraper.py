@@ -17,15 +17,13 @@ def print_time(msg):
     current_time = datetime.now().strftime("%H:%M:%S")
     print(f"[{current_time}] {msg}")
 
-def get_proxied_page(target_url, max_retries=5):
+def get_proxied_page(target_url, max_retries=3):
     """Fetches the raw HTML via ScraperAPI, bypassing headless browser detection."""
     api_key = os.getenv("SCRAPER_API_KEY")
     if not api_key:
         print_time("⚠️ Missing SCRAPER_API_KEY. Exiting.")
         return None
 
-    # THE FIX: render is OFF. We rely on Walmart's Server-Side Rendered HTML.
-    # This prevents ScraperAPI from crashing with 500 errors.
     payload = {
         'api_key': api_key,
         'url': target_url,
@@ -37,18 +35,14 @@ def get_proxied_page(target_url, max_retries=5):
     
     for attempt in range(max_retries):
         try:
-            # Much shorter timeout since we aren't waiting for Javascript
             response = requests.get(proxy_url, timeout=30) 
             
             if response.status_code == 200:
                 page_text = response.text
-                
-                # Verify Walmart didn't serve a raw Captcha page to the proxy IP
                 if "px-captcha" in page_text or "Press & Hold" in page_text:
                     print_time(f"  ⚠️ Proxy IP hit a Captcha on attempt {attempt + 1}. Requesting new IP...")
                     time.sleep(2)
                     continue
-                    
                 return page_text
                 
             elif response.status_code == 403:
@@ -66,10 +60,33 @@ def get_proxied_page(target_url, max_retries=5):
             
     return None
 
-def extract_price(text):
-    clean_text = text.replace('CDN$', '').replace('$', '').replace(',', '').strip()
-    match = re.search(r'(\d+\.?\d*)', clean_text)
-    return float(match.group(1)) if match else None
+def safe_extract_price(element):
+    """Strictly extracts price from an element, checking aria-labels first to avoid formatting errors."""
+    if not element:
+        return None
+        
+    # Walmart often hides the clean price inside the aria-label (e.g. "Current price is $149.99")
+    aria = element.get('aria-label')
+    if aria and '$' in aria:
+        match = re.search(r'\$\s*(\d+\.?\d*)', aria)
+        if match: 
+            return float(match.group(1))
+            
+    # Fallback to standard text extraction
+    text = element.get_text(separator=".", strip=True)
+    clean_text = re.sub(r'[^\d\.]', '', text)
+    
+    # Check for proper decimal formatting
+    match = re.search(r'(\d+\.\d{2})', clean_text)
+    if match:
+        return float(match.group(1))
+        
+    # Fallback for whole numbers without decimals
+    match2 = re.search(r'(\d+)', clean_text)
+    if match2:
+        return float(match2.group(1))
+        
+    return None
 
 def load_lego_themes(filename="legoproductTest.txt"):
     if not os.path.exists(filename):
@@ -156,7 +173,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
     all_discounted_products = []
     
     page_number = 1
-    max_pages = 2  # Increased to 2 pages for slightly better coverage
+    max_pages = 2 
     
     while page_number <= max_pages:
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
@@ -199,33 +216,21 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
                 if not title_text:
                     continue
 
-            current_price = None
-            original_price = None
+            # Strict Price DOM Targeting
+            curr_elem = parent.find(attrs={"data-automation": "current-price"}) or parent.find(attrs={"data-automation": "buybox-price"})
+            orig_elem = parent.find(attrs={"data-automation": "strike-through-price"}) or parent.find(attrs={"data-automation": "regular-price"})
 
-            curr_elem = parent.find(attrs={"data-automation": "current-price"})
-            orig_elem = parent.find(attrs={"data-automation": "strike-through-price"})
+            current_price = safe_extract_price(curr_elem)
+            original_price = safe_extract_price(orig_elem)
 
-            if curr_elem: current_price = extract_price(curr_elem.get_text(strip=True))
-            if orig_elem: original_price = extract_price(orig_elem.get_text(strip=True))
-
-            # Extensive regex fallback if tags are scrambled in the raw HTML
+            # If we don't have a definitive current price, skip the item entirely to prevent hallucination
             if current_price is None:
-                text_content = parent.get_text(separator=" ", strip=True)
-                prices = re.findall(r'\$\d+\.\d{2}|\$\d+', text_content)
-                unique_prices = []
-                for p in prices:
-                    val = extract_price(p)
-                    if val and val not in unique_prices: unique_prices.append(val)
+                continue
+                
+            if original_price is None:
+                original_price = current_price
 
-                if len(unique_prices) >= 2:
-                    unique_prices.sort()
-                    current_price = unique_prices[0]
-                    original_price = unique_prices[-1]
-                elif len(unique_prices) == 1:
-                    current_price = unique_prices[0]
-                    original_price = current_price
-
-            if current_price and original_price and original_price > current_price:
+            if original_price > current_price:
                 discount = round(((original_price - current_price) / original_price) * 100, 1)
 
                 if discount >= min_discount_percent and original_price >= min_original_price:
@@ -263,22 +268,21 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
             prod_soup = BeautifulSoup(html_content, "html.parser")
             clean_page_text = prod_soup.get_text(separator=" ", strip=True)
             
-            curr_elem = prod_soup.find(attrs={"data-automation": "buybox-price"})
-            orig_elem = prod_soup.find(attrs={"data-automation": "strike-through-price"})
+            # Double Verify Price on Product Page
+            curr_elem = prod_soup.find(attrs={"data-automation": "buybox-price"}) or prod_soup.find(attrs={"data-automation": "current-price"})
+            orig_elem = prod_soup.find(attrs={"data-automation": "strike-through-price"}) or prod_soup.find(attrs={"data-automation": "regular-price"})
 
-            if curr_elem:
-                new_curr = extract_price(curr_elem.get_text(strip=True))
-                if new_curr: deal["current_price"] = new_curr
+            new_curr = safe_extract_price(curr_elem)
+            new_orig = safe_extract_price(orig_elem)
 
-            if orig_elem:
-                new_orig = extract_price(orig_elem.get_text(strip=True))
-                if new_orig: deal["original_price"] = new_orig
+            if new_curr: deal["current_price"] = new_curr
+            if new_orig: deal["original_price"] = new_orig
 
             if deal["original_price"] > deal["current_price"]:
                 deal["discount"] = round(((deal["original_price"] - deal["current_price"]) / deal["original_price"]) * 100, 1)
 
+            # Strict Seller Validation
             seller_val = "N/A"
-            # In raw HTML, seller is often in plain text or hidden JSON blobs
             match = re.search(r'Sold and shipped by\s+([^\\.\n]*?)(?:\s+Fulfilled by|\s+Return|\s+Free delivery|$)', clean_page_text)
             
             if match:
