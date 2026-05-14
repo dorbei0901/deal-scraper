@@ -17,8 +17,8 @@ def print_time(msg):
     current_time = datetime.now().strftime("%H:%M:%S")
     print(f"[{current_time}] {msg}")
 
-def get_proxied_page(target_url, max_retries=2):
-    """Routes the request through ScraperAPI with fast-fail timeouts."""
+def get_proxied_page(target_url, max_retries=3):
+    """Routes the request through ScraperAPI with properly aligned timeouts."""
     api_key = os.getenv("SCRAPER_API_KEY")
     if not api_key:
         print_time("⚠️ Missing SCRAPER_API_KEY. Exiting.")
@@ -27,17 +27,17 @@ def get_proxied_page(target_url, max_retries=2):
     payload = {
         'api_key': api_key,
         'url': target_url,
-        'render': 'true',
-        'premium': 'true',
-        'device_type': 'desktop'
+        'render': 'true',      # Forces ScraperAPI to load JavaScript
+        'premium': 'true',     # Forces Residential IPs to bypass PerimeterX
+        'country_code': 'ca'   # Walmart Canada frequently drops non-North American traffic
     }
     
     proxy_url = 'https://api.scraperapi.com/?' + urlencode(payload)
     
     for attempt in range(max_retries):
         try:
-            # Reduced timeout to 45 seconds for faster testing
-            response = requests.get(proxy_url, timeout=45)
+            # Python timeout MUST be higher than ScraperAPI's internal 60s timeout
+            response = requests.get(proxy_url, timeout=75) 
             
             if response.status_code == 200:
                 return response.text
@@ -48,7 +48,7 @@ def get_proxied_page(target_url, max_retries=2):
                 print_time(f"⚠️ Proxy returned status {response.status_code} on attempt {attempt + 1}. Retrying...")
                 
         except requests.exceptions.Timeout:
-            print_time(f"⚠️ Proxy timed out (45s limit hit) on attempt {attempt + 1}. Retrying...")
+            print_time(f"⚠️ Proxy timed out (75s limit hit) on attempt {attempt + 1}. ScraperAPI took too long. Retrying...")
         except Exception as e:
             print_time(f"⚠️ Proxy request failed on attempt {attempt + 1}: {e}")
             
@@ -59,7 +59,7 @@ def extract_price(text):
     match = re.search(r'(\d+\.?\d*)', clean_text)
     return float(match.group(1)) if match else None
 
-def load_lego_themes(filename="legoproductTset.txt"):
+def load_lego_themes(filename="legoproductTest.txt"):
     if not os.path.exists(filename):
         print_time(f"⚠️ {filename} not found. Defaulting to general LEGO search.")
         return [""] 
