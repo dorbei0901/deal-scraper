@@ -1,5 +1,4 @@
 beautifulsoup4
 undetected-chromedriver
 selenium==4.36.0
-seleniumbase
 lxml
