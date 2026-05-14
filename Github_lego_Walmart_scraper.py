@@ -11,35 +11,46 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
 
-def get_proxied_page(target_url):
-    """Routes the request through ScraperAPI to bypass Walmart WAF."""
+def get_proxied_page(target_url, max_retries=3):
+    """Routes the request through ScraperAPI with auto-retry logic to bypass 500 errors."""
     api_key = os.getenv("SCRAPER_API_KEY")
     if not api_key:
         print("⚠️ Missing SCRAPER_API_KEY. Exiting.")
         return None
 
-    # We set render=true so ScraperAPI loads Walmart's Javascript before returning the HTML
-    # We set premium=true to use unblockable residential IPs
+    # Removed country_code to maximize the available residential proxy pool
     payload = {
         'api_key': api_key,
         'url': target_url,
         'render': 'true',
         'premium': 'true',
-        'country_code': 'ca' # Route through Canada
+        'device_type': 'desktop'
     }
     
     proxy_url = 'https://api.scraperapi.com/?' + urlencode(payload)
     
-    try:
-        response = requests.get(proxy_url, timeout=60)
-        if response.status_code == 200:
-            return response.text
-        else:
-            print(f"⚠️ Proxy returned status code: {response.status_code}")
-            return None
-    except Exception as e:
-        print(f"⚠️ Proxy request failed: {e}")
-        return None
+    for attempt in range(max_retries):
+        try:
+            # Increased timeout to 90s to allow ScraperAPI time to render heavy JS
+            response = requests.get(proxy_url, timeout=90)
+            
+            if response.status_code == 200:
+                return response.text
+            elif response.status_code == 403:
+                print("  ❌ 403 Forbidden: Your ScraperAPI key is invalid or you are out of free credits.")
+                return None
+            else:
+                print(f"  ⚠️ Proxy returned status {response.status_code} on attempt {attempt + 1}. Retrying...")
+                time.sleep(5) # Brief pause before requesting a new proxy IP
+                
+        except requests.exceptions.Timeout:
+            print(f"  ⚠️ Proxy timed out on attempt {attempt + 1}. Retrying...")
+            time.sleep(5)
+        except Exception as e:
+            print(f"  ⚠️ Proxy request failed on attempt {attempt + 1}: {e}")
+            time.sleep(5)
+            
+    return None
 
 def extract_price(text):
     clean_text = text.replace('CDN$', '').replace('$', '').replace(',', '').strip()
@@ -225,7 +236,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
         print(f"\n📦 Verifying Seller info for {len(all_discounted_products)} qualified items (Walmart Only)...")
         
         for deal in all_discounted_products:
-            time.sleep(1) # Slight pause to respect API limits
+            time.sleep(1) 
             html_content = get_proxied_page(deal["raw_link"])
             
             if not html_content:
