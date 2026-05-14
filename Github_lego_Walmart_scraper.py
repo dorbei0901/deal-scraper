@@ -17,40 +17,52 @@ def print_time(msg):
     current_time = datetime.now().strftime("%H:%M:%S")
     print(f"[{current_time}] {msg}")
 
-def get_proxied_page(target_url, max_retries=3):
-    """Routes the request through ScraperAPI with properly aligned timeouts."""
+def get_proxied_page(target_url, max_retries=5):
+    """Fetches the raw HTML via ScraperAPI, bypassing headless browser detection."""
     api_key = os.getenv("SCRAPER_API_KEY")
     if not api_key:
         print_time("⚠️ Missing SCRAPER_API_KEY. Exiting.")
         return None
 
+    # THE FIX: render is OFF. We rely on Walmart's Server-Side Rendered HTML.
+    # This prevents ScraperAPI from crashing with 500 errors.
     payload = {
         'api_key': api_key,
         'url': target_url,
-        'render': 'true',      # Forces ScraperAPI to load JavaScript
-        'premium': 'true',     # Forces Residential IPs to bypass PerimeterX
-        'country_code': 'ca'   # Walmart Canada frequently drops non-North American traffic
+        'premium': 'true', 
+        'country_code': 'ca'
     }
     
     proxy_url = 'https://api.scraperapi.com/?' + urlencode(payload)
     
     for attempt in range(max_retries):
         try:
-            # Python timeout MUST be higher than ScraperAPI's internal 60s timeout
-            response = requests.get(proxy_url, timeout=75) 
+            # Much shorter timeout since we aren't waiting for Javascript
+            response = requests.get(proxy_url, timeout=30) 
             
             if response.status_code == 200:
-                return response.text
+                page_text = response.text
+                
+                # Verify Walmart didn't serve a raw Captcha page to the proxy IP
+                if "px-captcha" in page_text or "Press & Hold" in page_text:
+                    print_time(f"  ⚠️ Proxy IP hit a Captcha on attempt {attempt + 1}. Requesting new IP...")
+                    time.sleep(2)
+                    continue
+                    
+                return page_text
+                
             elif response.status_code == 403:
-                print_time("❌ 403 Forbidden: Your ScraperAPI key is invalid or you are out of free credits.")
+                print_time("  ❌ 403 Forbidden: Your ScraperAPI key is invalid or out of credits.")
                 return None
             else:
-                print_time(f"⚠️ Proxy returned status {response.status_code} on attempt {attempt + 1}. Retrying...")
+                print_time(f"  ⚠️ Proxy returned status {response.status_code} on attempt {attempt + 1}. Retrying...")
+                time.sleep(2)
                 
         except requests.exceptions.Timeout:
-            print_time(f"⚠️ Proxy timed out (75s limit hit) on attempt {attempt + 1}. ScraperAPI took too long. Retrying...")
+            print_time(f"  ⚠️ Proxy timed out on attempt {attempt + 1}. Retrying...")
         except Exception as e:
-            print_time(f"⚠️ Proxy request failed on attempt {attempt + 1}: {e}")
+            print_time(f"  ⚠️ Proxy request failed: {e}")
+            time.sleep(2)
             
     return None
 
@@ -143,15 +155,14 @@ def send_email_report(deals):
 def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_price=50.0):
     all_discounted_products = []
     
-    # FOR TESTING: Hardcoded to ONLY check Page 1
     page_number = 1
-    max_pages = 1 
+    max_pages = 2  # Increased to 2 pages for slightly better coverage
     
     while page_number <= max_pages:
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
         url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}"
         
-        print_time(f"🔍 Sending Proxy Request to Walmart Search Page {page_number}...")
+        print_time(f"🔍 Fetching Raw HTML for Walmart Search Page {page_number}...")
         html_content = get_proxied_page(url)
         
         if not html_content:
@@ -162,7 +173,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
         soup = BeautifulSoup(html_content, "html.parser")
         product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "/en/ip/" in href))
         
-        print_time(f"🛠️ [DEBUG] Total product grid items found: {len(product_links)}")
+        print_time(f"🛠️ [DEBUG] Total product links found in raw HTML: {len(product_links)}")
         
         if not product_links:
             break
@@ -197,6 +208,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
             if curr_elem: current_price = extract_price(curr_elem.get_text(strip=True))
             if orig_elem: original_price = extract_price(orig_elem.get_text(strip=True))
 
+            # Extensive regex fallback if tags are scrambled in the raw HTML
             if current_price is None:
                 text_content = parent.get_text(separator=" ", strip=True)
                 prices = re.findall(r'\$\d+\.\d{2}|\$\d+', text_content)
@@ -237,10 +249,10 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
     final_verified_deals = []
     
     if all_discounted_products:
-        print_time(f"📦 Found {len(all_discounted_products)} potentially qualified items. Verifying Seller info...")
+        print_time(f"📦 Found {len(all_discounted_products)} potentially qualified items. Fetching product pages...")
         
         for index, deal in enumerate(all_discounted_products):
-            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Proxying product page for: {deal['title'][:30]}...")
+            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Fetching details for: {deal['title'][:30]}...")
             
             html_content = get_proxied_page(deal["raw_link"])
             
@@ -266,6 +278,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
                 deal["discount"] = round(((deal["original_price"] - deal["current_price"]) / deal["original_price"]) * 100, 1)
 
             seller_val = "N/A"
+            # In raw HTML, seller is often in plain text or hidden JSON blobs
             match = re.search(r'Sold and shipped by\s+([^\\.\n]*?)(?:\s+Fulfilled by|\s+Return|\s+Free delivery|$)', clean_page_text)
             
             if match:
@@ -294,7 +307,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
     return final_verified_deals
 
 def main():
-    print_time("🔎 Walmart LEGO Fast-Test Scraper (API Edition - 1 Page Limit)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (Raw API Edition)")
     
     min_discount_percent = 30.0 
     min_original_price = 50.0
@@ -305,7 +318,7 @@ def main():
     for theme in themes:
         display_name = theme if theme else "All LEGO"
         print(f"\n{'='*50}")
-        print_time(f"🚀 STARTING PROXY SEARCH FOR: {display_name.upper()}")
+        print_time(f"🚀 STARTING RAW SEARCH FOR: {display_name.upper()}")
         print(f"{'='*50}")
         
         found_deals = scrape_walmart_lego(keyword=theme, 
