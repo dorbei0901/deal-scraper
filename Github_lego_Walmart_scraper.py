@@ -10,15 +10,20 @@ from urllib.parse import urlencode
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
+from datetime import datetime
 
-def get_proxied_page(target_url, max_retries=3):
-    """Routes the request through ScraperAPI with auto-retry logic to bypass 500 errors."""
+def print_time(msg):
+    """Helper to print messages with a timestamp so you can track speed."""
+    current_time = datetime.now().strftime("%H:%M:%S")
+    print(f"[{current_time}] {msg}")
+
+def get_proxied_page(target_url, max_retries=2):
+    """Routes the request through ScraperAPI with fast-fail timeouts."""
     api_key = os.getenv("SCRAPER_API_KEY")
     if not api_key:
-        print("⚠️ Missing SCRAPER_API_KEY. Exiting.")
+        print_time("⚠️ Missing SCRAPER_API_KEY. Exiting.")
         return None
 
-    # Removed country_code to maximize the available residential proxy pool
     payload = {
         'api_key': api_key,
         'url': target_url,
@@ -31,24 +36,21 @@ def get_proxied_page(target_url, max_retries=3):
     
     for attempt in range(max_retries):
         try:
-            # Increased timeout to 90s to allow ScraperAPI time to render heavy JS
-            response = requests.get(proxy_url, timeout=90)
+            # Reduced timeout to 45 seconds for faster testing
+            response = requests.get(proxy_url, timeout=45)
             
             if response.status_code == 200:
                 return response.text
             elif response.status_code == 403:
-                print("  ❌ 403 Forbidden: Your ScraperAPI key is invalid or you are out of free credits.")
+                print_time("❌ 403 Forbidden: Your ScraperAPI key is invalid or you are out of free credits.")
                 return None
             else:
-                print(f"  ⚠️ Proxy returned status {response.status_code} on attempt {attempt + 1}. Retrying...")
-                time.sleep(5) # Brief pause before requesting a new proxy IP
+                print_time(f"⚠️ Proxy returned status {response.status_code} on attempt {attempt + 1}. Retrying...")
                 
         except requests.exceptions.Timeout:
-            print(f"  ⚠️ Proxy timed out on attempt {attempt + 1}. Retrying...")
-            time.sleep(5)
+            print_time(f"⚠️ Proxy timed out (45s limit hit) on attempt {attempt + 1}. Retrying...")
         except Exception as e:
-            print(f"  ⚠️ Proxy request failed on attempt {attempt + 1}: {e}")
-            time.sleep(5)
+            print_time(f"⚠️ Proxy request failed on attempt {attempt + 1}: {e}")
             
     return None
 
@@ -57,9 +59,9 @@ def extract_price(text):
     match = re.search(r'(\d+\.?\d*)', clean_text)
     return float(match.group(1)) if match else None
 
-def load_lego_themes(filename="legoproductTest.txt"):
+def load_lego_themes(filename="legoproduct.txt"):
     if not os.path.exists(filename):
-        print(f"⚠️ {filename} not found. Defaulting to general LEGO search.")
+        print_time(f"⚠️ {filename} not found. Defaulting to general LEGO search.")
         return [""] 
     with open(filename, "r", encoding="utf-8") as file:
         themes = [line.strip() for line in file if line.strip()]
@@ -74,14 +76,14 @@ def send_email_report(deals):
     recipient_email = os.getenv("RECIPIENT_EMAIL")
 
     if not sender_email or not sender_password or not recipient_email:
-        print("\n⚠️ Missing email credentials. Skipping email delivery.")
+        print_time("\n⚠️ Missing email credentials. Skipping email delivery.")
         return
 
     if not deals:
-        print("\n📭 No deals found today to email.")
+        print_time("\n📭 No deals found today to email.")
         return
 
-    print(f"\n📧 Formatting {len(deals)} Walmart deals into an email report...")
+    print_time(f"\n📧 Formatting {len(deals)} Walmart deals into an email report...")
 
     html = """
     <html>
@@ -134,31 +136,33 @@ def send_email_report(deals):
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, recipient_email, msg.as_string())
         server.quit()
-        print(f"✅ Email successfully sent to {recipient_email}")
+        print_time(f"✅ Email successfully sent to {recipient_email}")
     except Exception as e:
-        print(f"❌ Failed to send email: {e}")
+        print_time(f"❌ Failed to send email: {e}")
 
 def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_price=50.0):
     all_discounted_products = []
+    
+    # FOR TESTING: Hardcoded to ONLY check Page 1
     page_number = 1
-    max_pages = 4 
+    max_pages = 1 
     
     while page_number <= max_pages:
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
         url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}"
         
-        print(f"\n🔍 Proxying Request: {url}")
+        print_time(f"🔍 Sending Proxy Request to Walmart Search Page {page_number}...")
         html_content = get_proxied_page(url)
         
         if not html_content:
-            print(f"❌ Failed to fetch page {page_number}. Moving to next.")
+            print_time(f"❌ Failed to fetch search page {page_number}. Moving to next.")
             page_number += 1
             continue
 
         soup = BeautifulSoup(html_content, "html.parser")
         product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "/en/ip/" in href))
         
-        print(f"🛠️ [DEBUG] Items found on Page {page_number}: {len(product_links)}")
+        print_time(f"🛠️ [DEBUG] Total product grid items found: {len(product_links)}")
         
         if not product_links:
             break
@@ -233,13 +237,15 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
     final_verified_deals = []
     
     if all_discounted_products:
-        print(f"\n📦 Verifying Seller info for {len(all_discounted_products)} qualified items (Walmart Only)...")
+        print_time(f"📦 Found {len(all_discounted_products)} potentially qualified items. Verifying Seller info...")
         
-        for deal in all_discounted_products:
-            time.sleep(1) 
+        for index, deal in enumerate(all_discounted_products):
+            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Proxying product page for: {deal['title'][:30]}...")
+            
             html_content = get_proxied_page(deal["raw_link"])
             
             if not html_content:
+                print_time("  ❌ Failed to load product page.")
                 continue
 
             prod_soup = BeautifulSoup(html_content, "html.parser")
@@ -275,17 +281,20 @@ def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_pric
             deal["seller"] = seller_val
 
             if deal["seller"] != "Walmart.ca":
+                print_time(f"  ❌ Dropped: Sold by 3rd Party ({deal['seller']})")
                 continue
 
             if deal["discount"] >= min_discount_percent:
                 final_verified_deals.append(deal)
-                print(f"✅ Verified: {deal['title'][:40]}... | Disc: {deal['discount']}%")
+                print_time(f"  ✅ Verified Deal: {deal['discount']}% off! Seller: Walmart")
+            else:
+                print_time(f"  ❌ Dropped: Discount fell to {deal['discount']}% on product page.")
 
-    print(f"\n--- Scrape Complete for {keyword if keyword else 'All LEGO'} ---")
+    print_time(f"--- Scrape Complete for {keyword if keyword else 'All LEGO'} ---")
     return final_verified_deals
 
 def main():
-    print("🔎 Walmart LEGO Proxy Scraper (API Edition)")
+    print_time("🔎 Walmart LEGO Fast-Test Scraper (API Edition - 1 Page Limit)")
     
     min_discount_percent = 30.0 
     min_original_price = 50.0
@@ -296,7 +305,7 @@ def main():
     for theme in themes:
         display_name = theme if theme else "All LEGO"
         print(f"\n{'='*50}")
-        print(f"🚀 STARTING PROXY SEARCH FOR: {display_name.upper()}")
+        print_time(f"🚀 STARTING PROXY SEARCH FOR: {display_name.upper()}")
         print(f"{'='*50}")
         
         found_deals = scrape_walmart_lego(keyword=theme, 
