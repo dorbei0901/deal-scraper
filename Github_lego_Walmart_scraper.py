@@ -19,7 +19,7 @@ def print_time(msg):
     print(f"[{current_time}] {msg}")
 
 def get_proxied_page(target_url, max_retries=3):
-    """Fetches the raw HTML via ScraperAPI, bypassing headless browser detection."""
+    """Fetches the raw HTML via ScraperAPI."""
     api_key = os.getenv("SCRAPER_API_KEY")
     if not api_key:
         print_time("⚠️ Missing SCRAPER_API_KEY. Exiting.")
@@ -59,27 +59,6 @@ def get_proxied_page(target_url, max_retries=3):
             print_time(f"  ⚠️ Proxy request failed: {e}")
             time.sleep(2)
             
-    return None
-
-def safe_extract_price(element):
-    """Strictly extracts price from an exact DOM element."""
-    if not element:
-        return None
-        
-    arias = [element.get('aria-label')] + [e.get('aria-label') for e in element.find_all(attrs={"aria-label": True})]
-    for aria in arias:
-        if aria and '$' in aria:
-            match = re.search(r'\$\s*(\d+\.\d{2})', aria)
-            if match: 
-                return float(match.group(1))
-                
-    text = element.get_text(separator="", strip=True)
-    clean_text = re.sub(r'[^\d\.]', '', text)
-    
-    match = re.search(r'(\d+\.\d{2})', clean_text)
-    if match: 
-        return float(match.group(1))
-        
     return None
 
 def load_lego_themes(filename="legoproductTest.txt"):
@@ -160,7 +139,7 @@ def send_email_report(deals):
     except Exception as e:
         print_time(f"❌ Failed to send email: {e}")
 
-def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price=50.0):
+def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price=10.0):
     all_discounted_products = []
     
     page_number = 1
@@ -170,7 +149,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
         url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}"
         
-        print_time(f"\n🔍 Fetching Raw HTML for Walmart Search Page {page_number}...")
+        print_time(f"\n🔍 Fetching Walmart Search Page {page_number}...")
         html_content = get_proxied_page(url)
         
         if not html_content:
@@ -180,7 +159,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
         soup = BeautifulSoup(html_content, "html.parser")
         product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "walmart.ca/en/ip" in href))
         
-        print_time(f"🛠️ [DEBUG] Total product links found on page: {len(product_links)}")
+        print_time(f"🛠️ [DEBUG] Total product URLs found on page: {len(product_links)}")
         if not product_links:
             break
 
@@ -192,21 +171,15 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 continue
             processed_urls.add(href)
 
-            parent = link.find_parent(attrs={"data-automation": "product"}) 
-            if not parent:
-                parent = link.find_parent("div", attrs={"data-testid": "item-stack"}) or link.parent.parent.parent
-
-            if not parent: 
-                continue
-
+            # PHASE 1: Extremely broad net. Grab the title and URL only. 
+            # We defer ALL math and filtering to the backend payload parser.
             title_text = link.get_text(strip=True)
-            if not title_text or len(title_text) < 5 or "lego" not in title_text.lower():
+            if len(title_text) < 5 or "lego" not in title_text.lower():
                 img = link.find("img")
                 title_text = img.get("alt", "") if img else ""
                 if not title_text:
                     continue
             
-            # PHASE 1: WIDE NET. Only grab URLs and titles. NO FILTERING here.
             full_link = href if href.startswith("http") else "https://www.walmart.ca" + href
             
             all_discounted_products.append({
@@ -221,10 +194,11 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
     final_verified_deals = []
     
     if all_discounted_products:
-        print_time(f"\n📦 Queued {len(all_discounted_products)} items. Commencing buy-box isolation...")
+        print_time(f"\n📦 Queued {len(all_discounted_products)} items. Intercepting Backend Payloads...")
         
         for index, deal in enumerate(all_discounted_products):
-            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Verifying: {deal['title'][:35]}...")
+            short_title = (deal['title'][:35] + '...') if len(deal['title']) > 35 else deal['title']
+            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Verifying: {short_title}")
             
             html_content = get_proxied_page(deal["raw_link"])
             
@@ -232,92 +206,60 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 print_time("    ❌ Dropped: Failed to load product page.")
                 continue
 
-            prod_soup = BeautifulSoup(html_content, "html.parser")
+            # --- THE HOLY GRAIL: BACKEND PAYLOAD EXTRACTION ---
+            # We find the hidden script tags that contain the exact Next.js/React state database
+            soup = BeautifulSoup(html_content, "html.parser")
+            scripts = soup.find_all("script")
             
-            # 1. ISOLATE THE BUY BOX (Quarantine the rest of the page)
-            buybox = prod_soup.find(attrs={"data-testid": "buy-box"}) or prod_soup.find(attrs={"data-automation": "buy-box"})
-            if not buybox:
-                print_time("    ❌ Dropped: Could not locate product buy-box.")
+            backend_json_string = ""
+            for script in scripts:
+                if script.string and '"sellerName"' in script.string and '"currentPrice"' in script.string:
+                    backend_json_string = script.string
+                    break
+            
+            if not backend_json_string:
+                print_time("    ❌ Dropped: Could not locate backend payload.")
                 continue
 
-            buybox_text = buybox.get_text(separator=" ", strip=True)
-
-            # 2. OUT OF STOCK CHECK
-            if "out of stock" in buybox_text.lower(): 
-                print_time(f"    ❌ Dropped: Item is Out of Stock.")
+            # 1. OUT OF STOCK CHECK (Direct from Database)
+            if '"availabilityStatus":"OUT_OF_STOCK"' in backend_json_string.replace(" ", ""):
+                print_time("    ❌ Dropped: Backend status is Out of Stock.")
                 continue
 
-            # 3. RUTHLESS 3RD PARTY SELLER CHECK
-            seller = "N/A"
-            # Explicitly match the text exactly as it appears in the screenshots
-            seller_match = re.search(r'(?:Sold and shipped by|Sold by)\s+([^•|\n,]+)', buybox_text, re.IGNORECASE)
-            
+            # 2. SELLER CHECK (Direct from Database)
+            seller_val = "N/A"
+            seller_match = re.search(r'"sellerName"\s*:\s*"([^"]+)"', backend_json_string)
             if seller_match:
-                seller = seller_match.group(1).strip()
-            elif "sold and shipped by walmart" in buybox_text.lower() or "sold by walmart" in buybox_text.lower():
-                seller = "Walmart"
-
-            if "walmart" not in seller.lower():
-                print_time(f"    ❌ Dropped: 3rd Party Seller ({seller})")
+                seller_val = seller_match.group(1).strip()
+            
+            if "walmart" not in seller_val.lower():
+                print_time(f"    ❌ Dropped: 3rd Party Seller ({seller_val})")
                 continue
             
             deal["seller"] = "Walmart.ca"
 
-            # 4. EXACT PRICE EXTRACTION
-            curr_elem = buybox.find(attrs={"data-automation": "buybox-price"}) or buybox.find(attrs={"itemprop": "price"})
-            orig_elem = buybox.find(attrs={"data-automation": "strike-through-price"}) or buybox.find(attrs={"data-testid": "was-price"})
-
-            current_price = safe_extract_price(curr_elem)
-            original_price = safe_extract_price(orig_elem)
-
-            # JSON-LD Fallback for hyper-accurate current price
-            if not current_price:
-                for script in prod_soup.find_all("script", type="application/ld+json"):
-                    try:
-                        data = json.loads(script.string)
-                        items = data if isinstance(data, list) else [data]
-                        for item in items:
-                            if item.get("@type") == "Product":
-                                offers = item.get("offers", {})
-                                if isinstance(offers, list): offers = offers[0]
-                                if "price" in offers:
-                                    current_price = float(offers["price"])
-                    except: pass
-
-            # Regex Fallback explicitly targeting "Now $X" (ignoring Klarna/monthly)
-            if not current_price:
-                clean_bb = re.sub(r'(?i)(/mo|month|bi-weekly|klarna|afterpay).*', '', buybox_text)
-                prices = re.findall(r'\$\s*(\d+\.\d{2})', clean_bb)
-                if prices:
-                    current_price = float(prices[0])
-
-            if not current_price:
-                print_time("    ❌ Dropped: Could not detect valid current price.")
+            # 3. CURRENT PRICE (Direct from Database)
+            curr_val = None
+            curr_match = re.search(r'"currentPrice"\s*:\s*\{[^}]*"price"\s*:\s*([\d\.]+)', backend_json_string)
+            if curr_match:
+                curr_val = float(curr_match.group(1))
+                
+            if not curr_val:
+                print_time("    ❌ Dropped: Could not parse current price from payload.")
                 continue
 
-            # Parse original price explicitly from text if tags missing
-            if not original_price:
-                was_match = re.search(r'was\s*\$\s*(\d+\.\d{2})', buybox_text, re.IGNORECASE)
-                save_match = re.search(r'save\s*\$\s*(\d+\.\d{2})', buybox_text, re.IGNORECASE)
-                
-                if was_match:
-                    original_price = float(was_match.group(1))
-                elif save_match:
-                    original_price = current_price + float(save_match.group(1))
-                else:
-                    # Look for a second higher price in the clean buybox text
-                    clean_bb = re.sub(r'(?i)(/mo|month|bi-weekly|klarna|afterpay).*', '', buybox_text)
-                    prices = [float(p) for p in re.findall(r'\$\s*(\d+\.\d{2})', clean_bb)]
-                    valid_prices = [p for p in prices if p > current_price]
-                    if valid_prices:
-                        original_price = max(valid_prices)
+            deal["current_price"] = curr_val
 
-            # ZERO-TRUST OVERRIDE: If there is still no verifiable original price, there is NO discount.
-            if not original_price or original_price < current_price:
-                original_price = current_price
+            # 4. ORIGINAL/WAS PRICE (Direct from Database)
+            orig_val = None
+            orig_match = re.search(r'"wasPrice"\s*:\s*\{[^}]*"price"\s*:\s*([\d\.]+)', backend_json_string)
+            if orig_match:
+                orig_val = float(orig_match.group(1))
 
-            deal["current_price"] = current_price
-            deal["original_price"] = original_price
+            if not orig_val or orig_val < curr_val:
+                orig_val = curr_val
+
+            deal["original_price"] = orig_val
 
             # 5. FINAL MATH & VALIDATION
             if deal["original_price"] > deal["current_price"]:
@@ -339,10 +281,10 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
     return final_verified_deals
 
 def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (Zero-Trust Validation Edition)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (Backend Payload Edition)")
     
     min_discount_percent = 0.0 
-    min_original_price = 50.0
+    min_original_price = 10.0
 
     themes = load_lego_themes()
     master_deal_list = []
