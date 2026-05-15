@@ -4,8 +4,6 @@
 import time
 import re
 import os
-import json
-import uuid
 import smtplib
 import requests
 from urllib.parse import urlencode
@@ -20,7 +18,7 @@ def print_time(msg):
     print(f"[{current_time}] {msg}")
 
 def get_proxied_page(target_url, max_retries=3, session_id=None):
-    """Fetches the raw HTML via ScraperAPI, using Sticky Sessions for pagination."""
+    """Fetches the raw HTML via ScraperAPI."""
     api_key = os.getenv("SCRAPER_API_KEY")
     if not api_key:
         print_time("⚠️ Missing SCRAPER_API_KEY. Exiting.")
@@ -33,7 +31,6 @@ def get_proxied_page(target_url, max_retries=3, session_id=None):
         'country_code': 'ca'
     }
     
-    # If we pass a session_id, ScraperAPI holds the same IP address so Walmart pagination doesn't break
     if session_id:
         payload['session_number'] = session_id
     
@@ -41,7 +38,8 @@ def get_proxied_page(target_url, max_retries=3, session_id=None):
     
     for attempt in range(max_retries):
         try:
-            response = requests.get(proxy_url, timeout=30) 
+            # Slightly longer timeout for product pages
+            response = requests.get(proxy_url, timeout=40) 
             
             if response.status_code == 200:
                 page_text = response.text
@@ -67,8 +65,13 @@ def get_proxied_page(target_url, max_retries=3, session_id=None):
     return None
 
 def parse_lego_title(raw_title):
-    """Extracts the Set Number and cleans the SEO fluff from the title."""
-    set_num_match = re.search(r'\b([1-9]\d{3,4})\b', raw_title)
+    """Extracts the Set Number and heavily truncates the SEO fluff."""
+    # Prioritize 5-digit numbers (modern sets), then 4-digit numbers that aren't years (19xx, 20xx)
+    set_num_match = re.search(r'\b(\d{5})\b', raw_title)
+    if not set_num_match:
+        # Excludes 1900-1999 and 2000-2099 safely for old sets
+        set_num_match = re.search(r'\b([1-8]\d{3})\b', raw_title) 
+        
     set_number = set_num_match.group(1) if set_num_match else "N/A"
     
     clean_title = raw_title
@@ -77,8 +80,8 @@ def parse_lego_title(raw_title):
             clean_title = clean_title.split(delimiter)[0]
             
     clean_title = clean_title.strip()
-    if len(clean_title) > 60:
-        clean_title = clean_title[:57] + "..."
+    if len(clean_title) > 50:
+        clean_title = clean_title[:47] + "..."
         
     return clean_title, set_number
 
@@ -148,7 +151,7 @@ def send_email_report(deals):
     html += "</table></body></html>"
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Walmart LEGO Deals - {len(deals)} Verified Deals!"
+    msg["Subject"] = f"Walmart LEGO Deals - {len(deals)} Deals Found!"
     msg["From"] = sender_email
     msg["To"] = recipient_email
     msg.attach(MIMEText(html, "html"))
@@ -165,26 +168,30 @@ def send_email_report(deals):
 def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price=50.0):
     all_discounted_products = []
     page_number = 1
+    max_pages = 6
     
-    # Generate a unique Session ID for this specific keyword search
+    # Generate a simple sticky session ID
+    import uuid
     search_session_id = str(uuid.uuid4())[:10]
     
-    while True:
+    while page_number <= max_pages:
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
-        url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}"
         
-        print_time(f"\n🔍 Fetching Walmart Search Page {page_number} (Sticky IP: {search_session_id})...")
+        # THE FIX: Reinjected the Walmart filter directly into the URL
+        walmart_filter = "&filters=%5B%7B%22intent%22%3A%22retailer%22%2C%22values%22%3A%5B%22Walmart%22%5D%7D%5D"
+        url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}{walmart_filter}"
+        
+        print_time(f"\n🔍 Fetching Walmart Search Page {page_number}...")
         html_content = get_proxied_page(url, session_id=search_session_id)
         
         if not html_content:
             page_number += 1
-            if page_number > 15: break 
             continue
 
         soup = BeautifulSoup(html_content, "html.parser")
         product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "walmart.ca/en/ip" in href))
         
-        print_time(f"🛠️ [DEBUG] Total product URLs found on page {page_number}: {len(product_links)}")
+        print_time(f"🛠️ [DEBUG] Total product URLs found on page: {len(product_links)}")
         if not product_links:
             print_time(f"🛑 End of search results reached at page {page_number}.")
             break
@@ -205,10 +212,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                     continue
             
             clean_title, set_number = parse_lego_title(raw_title_text)
-            
-            if "42182" in set_number:
-                print_time(f"  🎯 BINGO! Found NASA Rover (42182) on Search Page {page_number}!")
-
             full_link = href if href.startswith("http") else "https://www.walmart.ca" + href
             
             all_discounted_products.append({
@@ -228,18 +231,13 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
         print_time(f"\n📦 Queued {len(all_discounted_products)} items. Intercepting Backend Payloads...")
         
         for index, deal in enumerate(all_discounted_products):
-            short_title = (deal['title'][:35] + '...') if len(deal['title']) > 35 else deal['title']
+            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Verifying: {deal['title']}")
             
-            if deal['set_number'] == "42182":
-                print_time(f"\n🚀 === VERIFYING NASA ROVER (42182) === 🚀")
-            else:
-                print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Verifying: {short_title}")
-            
-            # Use standard (non-sticky) IPs for product verification to spread the load
-            html_content = get_proxied_page(deal["raw_link"])
+            # Increased retries to 5 to prevent random network drops
+            html_content = get_proxied_page(deal["raw_link"], max_retries=5)
             
             if not html_content:
-                print_time("    ❌ Dropped: Failed to load product page.")
+                print_time("    ❌ Dropped: Failed to load product page after 5 attempts.")
                 continue
 
             soup = BeautifulSoup(html_content, "html.parser")
@@ -251,46 +249,56 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                     backend_json_string = script.string
                     break
             
-            if not backend_json_string:
-                print_time("    ❌ Dropped: Could not locate backend payload.")
-                continue
-
-            if '"availabilityStatus":"OUT_OF_STOCK"' in backend_json_string.replace(" ", ""):
+            # 1. OUT OF STOCK CHECK
+            if backend_json_string and '"availabilityStatus":"OUT_OF_STOCK"' in backend_json_string.replace(" ", ""):
                 print_time("    ❌ Dropped: Backend status is Out of Stock.")
                 continue
 
+            # 2. SELLER CHECK
             seller_val = "N/A"
-            seller_match = re.search(r'"sellerName"\s*:\s*"([^"]+)"', backend_json_string)
-            if seller_match:
-                seller_val = seller_match.group(1).strip()
+            if backend_json_string:
+                seller_match = re.search(r'"sellerName"\s*:\s*"([^"]+)"', backend_json_string)
+                if seller_match:
+                    seller_val = seller_match.group(1).strip()
             
-            if "walmart" not in seller_val.lower():
+            if seller_val != "N/A" and "walmart" not in seller_val.lower():
                 print_time(f"    ❌ Dropped: 3rd Party Seller ({seller_val})")
                 continue
             
             deal["seller"] = "Walmart.ca"
 
+            # 3. CURRENT PRICE (With Bulletproof Fallback)
             curr_val = None
-            curr_match = re.search(r'"currentPrice"\s*:\s*\{[^}]*"price"\s*:\s*([\d\.]+)', backend_json_string)
-            if curr_match:
-                curr_val = float(curr_match.group(1))
+            if backend_json_string:
+                curr_match = re.search(r'"currentPrice"\s*:\s*\{[^}]*"price"\s*:\s*([\d\.]+)', backend_json_string)
+                if curr_match:
+                    curr_val = float(curr_match.group(1))
+                    
+            # HTML DOM Fallback if JSON Regex fails
+            if not curr_val:
+                price_elem = soup.find(attrs={"itemprop": "price"})
+                if price_elem and price_elem.get("content"):
+                    curr_val = float(price_elem.get("content"))
                 
             if not curr_val:
-                print_time("    ❌ Dropped: Could not parse current price from payload.")
+                print_time("    ❌ Dropped: Could not parse current price.")
                 continue
 
             deal["current_price"] = curr_val
 
+            # 4. ORIGINAL/WAS PRICE
             orig_val = None
-            orig_match = re.search(r'"wasPrice"\s*:\s*\{[^}]*"price"\s*:\s*([\d\.]+)', backend_json_string)
-            if orig_match:
-                orig_val = float(orig_match.group(1))
+            if backend_json_string:
+                orig_match = re.search(r'"wasPrice"\s*:\s*\{[^}]*"price"\s*:\s*([\d\.]+)', backend_json_string)
+                if orig_match:
+                    orig_val = float(orig_match.group(1))
 
             if not orig_val or orig_val < curr_val:
                 orig_val = curr_val
 
             deal["original_price"] = orig_val
 
+            # 5. FINAL MATH & VALIDATION
             if deal["original_price"] > deal["current_price"]:
                 deal["discount"] = round(((deal["original_price"] - deal["current_price"]) / deal["original_price"]) * 100, 1)
             else:
@@ -310,8 +318,9 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
     return final_verified_deals
 
 def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (Sticky Pagination Edition)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (Final Precision Edition)")
     
+    # Kept at 0.0% for wide testing
     min_discount_percent = 0.0 
     min_original_price = 50.0
 
