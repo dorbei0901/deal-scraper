@@ -106,4 +106,11 @@ def send_email_report(deals):
     html = """
     <html>
     <head>
-    <style
+    <style>
+      table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }
+      th, td { text-align: left; padding: 8px; border: 1px solid #ddd; }
+      th { background-color: #f2f2f2; color: #0071ce; } 
+      tr:nth-child(even) {background-color: #f9f9f9;}
+      a { color: #0066c0; text-decoration: none; font-weight: bold; }
+    </style>
+    </head>
