@@ -61,19 +61,30 @@ def get_proxied_page(target_url, max_retries=3):
     return None
 
 def safe_extract_price(element):
+    """Strictly extracts price, ignoring financing terms, savings labels, and dates."""
     if not element:
         return None
+        
+    # Step 1: Check hidden aria-labels (Walmart's cleanest data source)
     aria = element.get('aria-label')
-    if aria and '$' in aria:
-        match = re.search(r'\$\s*(\d+\.?\d*)', aria)
+    if aria:
+        match = re.search(r'\$\s*(\d+\.\d{2})', aria)
         if match: 
             return float(match.group(1))
-    text = element.get_text(separator=".", strip=True)
-    clean_text = re.sub(r'[^\d\.]', '', text)
-    match = re.search(r'(\d+\.\d{2})', clean_text)
-    if match: return float(match.group(1))
-    match2 = re.search(r'(\d+)', clean_text)
-    if match2: return float(match2.group(1))
+            
+    # Step 2: Check standard text
+    text = element.get_text(separator=" ", strip=True).lower()
+    
+    # CRITICAL: Reject strings that look like financing or savings
+    invalid_words = ['/mo', 'month', 'save', 'pay', 'installments', 'klarna', 'afterpay']
+    if any(word in text for word in invalid_words):
+        return None
+        
+    # Search for exactly formatted dollar amounts ($XX.XX)
+    match = re.search(r'\$\s*(\d+\.\d{2})', text)
+    if match: 
+        return float(match.group(1))
+        
     return None
 
 def load_lego_themes(filename="legoproductTest.txt"):
@@ -143,7 +154,7 @@ def send_email_report(deals):
     html += "</table></body></html>"
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Walmart LEGO Deals - {len(deals)} Great Discounts Found!"
+    msg["Subject"] = f"Walmart LEGO Deals - {len(deals)} Verified Discounts!"
     msg["From"] = sender_email
     msg["To"] = recipient_email
     msg.attach(MIMEText(html, "html"))
@@ -157,11 +168,11 @@ def send_email_report(deals):
     except Exception as e:
         print_time(f"❌ Failed to send email: {e}")
 
-def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price=50.0):
+def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_price=30.0):
     all_discounted_products = []
     
     page_number = 1
-    max_pages = 3  
+    max_pages = 2  
     
     while page_number <= max_pages:
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
@@ -179,8 +190,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
 
         soup = BeautifulSoup(html_content, "html.parser")
         product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "/en/ip/" in href))
-        
-        print_time(f"🛠️ [DEBUG] Total product links found in raw HTML: {len(product_links)}")
         
         if not product_links:
             break
@@ -206,38 +215,27 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 title_text = img.get("alt", "") if img else ""
                 if not title_text:
                     continue
+            
+            short_title = (title_text[:40] + '...') if len(title_text) > 40 else title_text
 
-            curr_elem = parent.find(attrs={"data-automation": "current-price"}) or parent.find(attrs={"data-automation": "buybox-price"})
-            orig_elem = parent.find(attrs={"data-automation": "strike-through-price"}) or parent.find(attrs={"data-automation": "regular-price"})
+            # Check multiple known Walmart CSS tags for prices
+            curr_elem = parent.find(attrs={"data-automation": "current-price"}) or \
+                        parent.find(attrs={"data-automation": "buybox-price"}) or \
+                        parent.find(attrs={"data-testid": "current-price"}) or \
+                        parent.find(attrs={"data-testid": "price-wrap"})
+
+            orig_elem = parent.find(attrs={"data-automation": "strike-through-price"}) or \
+                        parent.find(attrs={"data-automation": "regular-price"}) or \
+                        parent.find(attrs={"data-testid": "was-price"})
 
             current_price = safe_extract_price(curr_elem)
             original_price = safe_extract_price(orig_elem)
 
-            # Bulletproof Fallback: Search the raw text block if tags are missing
-            if current_price is None:
-                text_content = parent.get_text(separator=" ", strip=True)
-                prices = re.findall(r'\$\d+\.\d{2}|\$\d+', text_content)
-                unique_prices = []
-                for p in prices:
-                    clean_p = float(p.replace('$', '').strip())
-                    if clean_p not in unique_prices: 
-                        unique_prices.append(clean_p)
-
-                if len(unique_prices) >= 2:
-                    unique_prices.sort()
-                    current_price = unique_prices[0]
-                    original_price = unique_prices[-1]
-                elif len(unique_prices) == 1:
-                    current_price = unique_prices[0]
-                    original_price = current_price
-
+            # Check if there's a visible sale badge on the card
             parent_text_lower = parent.get_text(separator=" ", strip=True).lower()
             has_sale_badge = "save" in parent_text_lower or "clearance" in parent_text_lower or "rollback" in parent_text_lower
 
-            short_title = (title_text[:30] + '...') if len(title_text) > 30 else title_text
-
             if current_price is None:
-                print_time(f"  ❌ Skipped: Could not extract price for '{short_title}'")
                 continue
                 
             if original_price is None:
@@ -247,14 +245,13 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
             if original_price > current_price:
                 discount = round(((original_price - current_price) / original_price) * 100, 1)
             elif has_sale_badge:
-                discount = 99.0 # Placeholder flag to check later
-                original_price = current_price * 1.5 
+                discount = 99.0 # Placeholder flag to prompt the Phase 2 product page check
 
             if original_price < min_original_price:
-                print_time(f"  ❌ Skipped: Original price (${original_price}) is under minimum (${min_original_price}) for '{short_title}'")
                 continue
 
-            if discount >= min_discount_percent:
+            # We accept it if it meets the discount requirement, OR if it has a sale badge (which we will verify next)
+            if discount >= min_discount_percent or has_sale_badge:
                 if " - " in title_text: title_text = title_text.split(" - ")[0].strip()
                 if len(title_text) > 60: title_text = title_text[:60].strip() + "..."
                 
@@ -269,15 +266,13 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                     "raw_link": full_link,
                     "theme": keyword if keyword else "General LEGO" 
                 })
-            else:
-                print_time(f"  ❌ Skipped: Discount ({discount}%) is under minimum ({min_discount_percent}%) for '{short_title}'")
 
         page_number += 1
 
     final_verified_deals = []
     
     if all_discounted_products:
-        print_time(f"📦 Found {len(all_discounted_products)} potentially qualified items. Fetching product pages...")
+        print_time(f"📦 Found {len(all_discounted_products)} potentially qualified items. Verifying prices & seller...")
         
         for index, deal in enumerate(all_discounted_products):
             print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Fetching details for: {deal['title'][:30]}...")
@@ -328,16 +323,17 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 final_verified_deals.append(deal)
                 print_time(f"  ✅ Verified Deal: {deal['discount']}% off! Seller: Walmart")
             else:
-                print_time(f"  ❌ Dropped: Discount fell to {deal['discount']}% on product page.")
+                print_time(f"  ❌ Dropped: Final true discount is {deal['discount']}%.")
 
     print_time(f"--- Scrape Complete for {keyword if keyword else 'All LEGO'} ---")
     return final_verified_deals
 
 def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (Raw API Edition - Debug Mode)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (Raw API Edition - Strict Pricing)")
     
-    min_discount_percent = 0.0 
-    min_original_price = 50.0
+    # Restored to realistic test parameters to verify it actually finds proper deals
+    min_discount_percent = 20.0 
+    min_original_price = 30.0
 
     themes = load_lego_themes()
     master_deal_list = []
