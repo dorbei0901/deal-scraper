@@ -90,9 +90,6 @@ def load_lego_themes(filename="legoproductTest.txt"):
         themes = [line.strip() for line in file if line.strip()]
     return themes if themes else [""]
 
-def format_price(price):
-    return f"${price:.2f}" if price is not None else "N/A"
-
 def send_email_report(deals):
     sender_email = os.getenv("GMAIL_ADDRESS")
     sender_password = os.getenv("GMAIL_APP_PASSWORD")
@@ -149,7 +146,7 @@ def send_email_report(deals):
     html += "</table></body></html>"
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Walmart LEGO Deals - {len(deals)} Verified Discounts!"
+    msg["Subject"] = f"Walmart LEGO Deals - {len(deals)} Verified Deals!"
     msg["From"] = sender_email
     msg["To"] = recipient_email
     msg.attach(MIMEText(html, "html"))
@@ -163,7 +160,7 @@ def send_email_report(deals):
     except Exception as e:
         print_time(f"❌ Failed to send email: {e}")
 
-def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price=10.0):
+def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price=50.0):
     all_discounted_products = []
     
     page_number = 1
@@ -177,7 +174,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
         html_content = get_proxied_page(url)
         
         if not html_content:
-            print_time(f"❌ Failed to fetch search page {page_number}. Moving to next.")
             page_number += 1
             continue
 
@@ -185,7 +181,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
         product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "walmart.ca/en/ip" in href))
         
         print_time(f"🛠️ [DEBUG] Total product links found on page: {len(product_links)}")
-        
         if not product_links:
             break
 
@@ -211,165 +206,143 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 if not title_text:
                     continue
             
-            short_title = (title_text[:40] + '...') if len(title_text) > 40 else title_text
-
-            curr_elem = parent.find(attrs={"data-automation": "current-price"}) or parent.find(attrs={"data-testid": "current-price"})
-            orig_elem = parent.find(attrs={"data-automation": "strike-through-price"}) or parent.find(attrs={"data-testid": "was-price"})
-
-            current_price = safe_extract_price(curr_elem)
-            original_price = safe_extract_price(orig_elem)
-
-            if current_price is None:
-                text_content = parent.get_text(separator=" ", strip=True)
-                text_content = re.sub(r'(?i)(pay|klarna|afterpay|/mo|month).*', '', text_content)
-                prices = [float(p) for p in re.findall(r'\$\s*(\d+\.\d{2})', text_content)]
-                if prices:
-                    current_price = min(prices)
-                    original_price = max(prices)
-
-            if current_price is None:
-                continue
-                
-            if original_price is None:
-                original_price = current_price
-
-            discount = 0.0
-            if original_price > current_price:
-                discount = round(((original_price - current_price) / original_price) * 100, 1)
-
-            if original_price < min_original_price:
-                continue
-
-            if discount >= min_discount_percent:
-                if " - " in title_text: title_text = title_text.split(" - ")[0].strip()
-                if len(title_text) > 60: title_text = title_text[:60].strip() + "..."
-                
-                full_link = href if href.startswith("http") else "https://www.walmart.ca" + href
-                
-                all_discounted_products.append({
-                    "title": title_text,
-                    "current_price": current_price,
-                    "original_price": original_price,
-                    "discount": discount,
-                    "link": full_link.split('?')[0], 
-                    "raw_link": full_link,
-                    "theme": keyword if keyword else "General LEGO" 
-                })
+            # PHASE 1: WIDE NET. Only grab URLs and titles. NO FILTERING here.
+            full_link = href if href.startswith("http") else "https://www.walmart.ca" + href
+            
+            all_discounted_products.append({
+                "title": title_text,
+                "link": full_link.split('?')[0], 
+                "raw_link": full_link,
+                "theme": keyword if keyword else "General LEGO" 
+            })
 
         page_number += 1
 
     final_verified_deals = []
     
     if all_discounted_products:
-        print_time(f"\n📦 Found {len(all_discounted_products)} items. Annihilating carousels and verifying data...")
+        print_time(f"\n📦 Queued {len(all_discounted_products)} items. Commencing buy-box isolation...")
         
         for index, deal in enumerate(all_discounted_products):
-            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Fetching product page: {deal['title'][:30]}...")
+            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Verifying: {deal['title'][:35]}...")
             
             html_content = get_proxied_page(deal["raw_link"])
             
             if not html_content:
-                print_time("    ❌ Failed to load product page.")
+                print_time("    ❌ Dropped: Failed to load product page.")
                 continue
 
             prod_soup = BeautifulSoup(html_content, "html.parser")
             
-            # 1. OUT OF STOCK CHECK
-            clean_page_text = prod_soup.get_text(separator=" ", strip=True)
-            if "out of stock" in clean_page_text.lower()[:5000]: # Check top of page
+            # 1. ISOLATE THE BUY BOX (Quarantine the rest of the page)
+            buybox = prod_soup.find(attrs={"data-testid": "buy-box"}) or prod_soup.find(attrs={"data-automation": "buy-box"})
+            if not buybox:
+                print_time("    ❌ Dropped: Could not locate product buy-box.")
+                continue
+
+            buybox_text = buybox.get_text(separator=" ", strip=True)
+
+            # 2. OUT OF STOCK CHECK
+            if "out of stock" in buybox_text.lower(): 
                 print_time(f"    ❌ Dropped: Item is Out of Stock.")
                 continue
 
-            # 2. CAROUSEL ANNIHILATION
-            # Destroy all recommended items so their prices don't cross-contaminate the main item
-            for junk in prod_soup.find_all(attrs={"data-automation": "carousel"}): junk.decompose()
-            for junk in prod_soup.find_all(attrs={"data-testid": "carousel"}): junk.decompose()
-            for junk in prod_soup.find_all(class_=re.compile(r'carousel|recommend|similar', re.I)): junk.decompose()
+            # 3. RUTHLESS 3RD PARTY SELLER CHECK
+            seller = "N/A"
+            # Explicitly match the text exactly as it appears in the screenshots
+            seller_match = re.search(r'(?:Sold and shipped by|Sold by)\s+([^•|\n,]+)', buybox_text, re.IGNORECASE)
+            
+            if seller_match:
+                seller = seller_match.group(1).strip()
+            elif "sold and shipped by walmart" in buybox_text.lower() or "sold by walmart" in buybox_text.lower():
+                seller = "Walmart"
 
-            # 3. JSON-LD DATABASE EXTRACTION (Highest Priority)
-            json_price = None
-            for script in prod_soup.find_all("script", type="application/ld+json"):
-                try:
-                    data = json.loads(script.string)
-                    items = data if isinstance(data, list) else [data]
-                    for item in items:
-                        if item.get("@type") == "Product":
-                            offers = item.get("offers", {})
-                            if isinstance(offers, list): offers = offers[0]
-                            if "price" in offers:
-                                json_price = float(offers["price"])
-                            if "availability" in offers and "OutOfStock" in offers["availability"]:
-                                json_price = "OOS"
-                except: pass
+            if "walmart" not in seller.lower():
+                print_time(f"    ❌ Dropped: 3rd Party Seller ({seller})")
+                continue
+            
+            deal["seller"] = "Walmart.ca"
 
-            if json_price == "OOS":
-                print_time(f"    ❌ Dropped: JSON Database says Out of Stock.")
+            # 4. EXACT PRICE EXTRACTION
+            curr_elem = buybox.find(attrs={"data-automation": "buybox-price"}) or buybox.find(attrs={"itemprop": "price"})
+            orig_elem = buybox.find(attrs={"data-automation": "strike-through-price"}) or buybox.find(attrs={"data-testid": "was-price"})
+
+            current_price = safe_extract_price(curr_elem)
+            original_price = safe_extract_price(orig_elem)
+
+            # JSON-LD Fallback for hyper-accurate current price
+            if not current_price:
+                for script in prod_soup.find_all("script", type="application/ld+json"):
+                    try:
+                        data = json.loads(script.string)
+                        items = data if isinstance(data, list) else [data]
+                        for item in items:
+                            if item.get("@type") == "Product":
+                                offers = item.get("offers", {})
+                                if isinstance(offers, list): offers = offers[0]
+                                if "price" in offers:
+                                    current_price = float(offers["price"])
+                    except: pass
+
+            # Regex Fallback explicitly targeting "Now $X" (ignoring Klarna/monthly)
+            if not current_price:
+                clean_bb = re.sub(r'(?i)(/mo|month|bi-weekly|klarna|afterpay).*', '', buybox_text)
+                prices = re.findall(r'\$\s*(\d+\.\d{2})', clean_bb)
+                if prices:
+                    current_price = float(prices[0])
+
+            if not current_price:
+                print_time("    ❌ Dropped: Could not detect valid current price.")
                 continue
 
-            # 4. HTML DOM EXTRACTION
-            curr_elem = prod_soup.find(attrs={"data-automation": "buybox-price"}) or prod_soup.find(attrs={"data-automation": "current-price"})
-            orig_elem = prod_soup.find(attrs={"data-automation": "strike-through-price"}) or prod_soup.find(attrs={"data-automation": "regular-price"})
+            # Parse original price explicitly from text if tags missing
+            if not original_price:
+                was_match = re.search(r'was\s*\$\s*(\d+\.\d{2})', buybox_text, re.IGNORECASE)
+                save_match = re.search(r'save\s*\$\s*(\d+\.\d{2})', buybox_text, re.IGNORECASE)
+                
+                if was_match:
+                    original_price = float(was_match.group(1))
+                elif save_match:
+                    original_price = current_price + float(save_match.group(1))
+                else:
+                    # Look for a second higher price in the clean buybox text
+                    clean_bb = re.sub(r'(?i)(/mo|month|bi-weekly|klarna|afterpay).*', '', buybox_text)
+                    prices = [float(p) for p in re.findall(r'\$\s*(\d+\.\d{2})', clean_bb)]
+                    valid_prices = [p for p in prices if p > current_price]
+                    if valid_prices:
+                        original_price = max(valid_prices)
 
-            new_curr = safe_extract_price(curr_elem)
-            new_orig = safe_extract_price(orig_elem)
+            # ZERO-TRUST OVERRIDE: If there is still no verifiable original price, there is NO discount.
+            if not original_price or original_price < current_price:
+                original_price = current_price
 
-            # Assign Current Price (Prefer JSON over HTML)
-            if json_price:
-                deal["current_price"] = json_price
-            elif new_curr:
-                deal["current_price"] = new_curr
+            deal["current_price"] = current_price
+            deal["original_price"] = original_price
 
-            # Assign Original Price
-            if new_orig:
-                deal["original_price"] = new_orig
-            else:
-                # If product page has no strike-through, but search page did, keep search page orig. 
-                # If neither has it, orig = curr.
-                if deal["original_price"] <= deal["current_price"]:
-                    deal["original_price"] = deal["current_price"]
-
-            # Final Math
+            # 5. FINAL MATH & VALIDATION
             if deal["original_price"] > deal["current_price"]:
                 deal["discount"] = round(((deal["original_price"] - deal["current_price"]) / deal["original_price"]) * 100, 1)
             else:
                 deal["discount"] = 0.0
 
-            # 5. STRICT SELLER VERIFICATION
-            seller_val = "N/A"
-            seller_elem = prod_soup.find(attrs={"data-automation": "seller-name"})
-            if seller_elem:
-                seller_val = seller_elem.get_text(strip=True)
-            else:
-                buybox = prod_soup.find(attrs={"data-testid": "buy-box"}) or prod_soup.body
-                buybox_text = buybox.get_text(separator=" ", strip=True)
-                
-                if "Sold and shipped by Walmart" in buybox_text or "Sold by Walmart" in buybox_text:
-                    seller_val = "Walmart.ca"
-                else:
-                    match = re.search(r'Sold and shipped by\s+([^|•\n]+)', buybox_text)
-                    if match: seller_val = match.group(1).strip()
-
-            if "Walmart" in seller_val: seller_val = "Walmart.ca"
-            deal["seller"] = seller_val
-
-            if deal["seller"] != "Walmart.ca":
-                print_time(f"    ❌ Dropped: Sold by 3rd Party ({deal['seller']})")
-                continue
+            if deal["original_price"] < min_original_price:
+                 print_time(f"    ❌ Dropped: MSRP (${deal['original_price']}) under minimum threshold.")
+                 continue
 
             if deal["discount"] >= min_discount_percent:
                 final_verified_deals.append(deal)
-                print_time(f"    ✅ Verified Deal! Curr: ${deal['current_price']} | Orig: ${deal['original_price']} | Disc: {deal['discount']}%")
+                print_time(f"    ✅ VERIFIED! Curr: ${deal['current_price']} | Orig: ${deal['original_price']} | Disc: {deal['discount']}%")
             else:
-                print_time(f"    ❌ Dropped: Final true discount is {deal['discount']}%.")
+                print_time(f"    ❌ Dropped: Discount ({deal['discount']}%) too low.")
 
     print_time(f"--- Scrape Complete for {keyword if keyword else 'All LEGO'} ---")
     return final_verified_deals
 
 def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (Anti-Contamination Edition)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (Zero-Trust Validation Edition)")
     
     min_discount_percent = 0.0 
-    min_original_price = 10.0
+    min_original_price = 50.0
 
     themes = load_lego_themes()
     master_deal_list = []
