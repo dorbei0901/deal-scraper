@@ -61,6 +61,25 @@ def get_proxied_page(target_url, max_retries=3):
             
     return None
 
+def parse_lego_title(raw_title):
+    """Extracts the Set Number and cleans the SEO fluff from the title."""
+    # 1. Extract 4 or 5 digit LEGO set number
+    set_num_match = re.search(r'\b([1-9]\d{3,4})\b', raw_title)
+    set_number = set_num_match.group(1) if set_num_match else "N/A"
+    
+    # 2. Chop off extra fluff based on common Walmart title delimiters
+    clean_title = raw_title
+    for delimiter in [' - ', ' – ', ', ', ' (']:
+        if delimiter in clean_title:
+            clean_title = clean_title.split(delimiter)[0]
+            
+    # 3. Clean up and force a max length just in case
+    clean_title = clean_title.strip()
+    if len(clean_title) > 60:
+        clean_title = clean_title[:57] + "..."
+        
+    return clean_title, set_number
+
 def load_lego_themes(filename="legoproductTest.txt"):
     if not os.path.exists(filename):
         print_time(f"⚠️ {filename} not found. Defaulting to general LEGO search.")
@@ -100,7 +119,8 @@ def send_email_report(deals):
     <table>
       <tr>
         <th style="color: white;">Product Name</th>
-        <th style="color: white;">Type</th>
+        <th style="color: white;">Set #</th>
+        <th style="color: white;">Theme</th>
         <th style="color: white;">Current</th>
         <th style="color: white;">Original</th>
         <th style="color: white;">Discount</th>
@@ -113,7 +133,8 @@ def send_email_report(deals):
         html += f"""
       <tr>
         <td>{deal['title']}</td>
-        <td>{deal['theme'].title() if deal['theme'] else 'General LEGO'}</td>
+        <td style="font-weight: bold; color: #333;">{deal['set_number']}</td>
+        <td>{deal['theme'].title() if deal['theme'] else 'General'}</td>
         <td>${deal['current_price']:.2f}</td>
         <td>${deal['original_price']:.2f}</td>
         <td style="color: red; font-weight: bold;">{deal['discount']}%</td>
@@ -139,13 +160,13 @@ def send_email_report(deals):
     except Exception as e:
         print_time(f"❌ Failed to send email: {e}")
 
-def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price=10.0):
+def scrape_walmart_lego(keyword="", min_discount_percent=30.0, min_original_price=50.0):
     all_discounted_products = []
     
     page_number = 1
-    max_pages = 6  
+    # We remove max_pages and use a while loop that breaks when Walmart runs out of pages
     
-    while page_number <= max_pages:
+    while True:
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
         url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}"
         
@@ -154,13 +175,17 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
         
         if not html_content:
             page_number += 1
+            if page_number > 20: break # Absolute failsafe just in case of infinite loop
             continue
 
         soup = BeautifulSoup(html_content, "html.parser")
         product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "walmart.ca/en/ip" in href))
         
         print_time(f"🛠️ [DEBUG] Total product URLs found on page: {len(product_links)}")
+        
+        # If the grid is empty, we have reached the end of Walmart's results for this search term.
         if not product_links:
+            print_time(f"🛑 End of search results reached at page {page_number}.")
             break
 
         processed_urls = set()
@@ -171,19 +196,21 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 continue
             processed_urls.add(href)
 
-            # PHASE 1: Extremely broad net. Grab the title and URL only. 
-            # We defer ALL math and filtering to the backend payload parser.
-            title_text = link.get_text(strip=True)
-            if len(title_text) < 5 or "lego" not in title_text.lower():
+            raw_title_text = link.get_text(strip=True)
+            if len(raw_title_text) < 5 or "lego" not in raw_title_text.lower():
                 img = link.find("img")
-                title_text = img.get("alt", "") if img else ""
-                if not title_text:
+                raw_title_text = img.get("alt", "") if img else ""
+                if not raw_title_text:
                     continue
             
+            clean_title, set_number = parse_lego_title(raw_title_text)
+
             full_link = href if href.startswith("http") else "https://www.walmart.ca" + href
             
             all_discounted_products.append({
-                "title": title_text,
+                "title": clean_title,
+                "set_number": set_number,
+                "raw_title": raw_title_text,
                 "link": full_link.split('?')[0], 
                 "raw_link": full_link,
                 "theme": keyword if keyword else "General LEGO" 
@@ -197,8 +224,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
         print_time(f"\n📦 Queued {len(all_discounted_products)} items. Intercepting Backend Payloads...")
         
         for index, deal in enumerate(all_discounted_products):
-            short_title = (deal['title'][:35] + '...') if len(deal['title']) > 35 else deal['title']
-            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Verifying: {short_title}")
+            print_time(f"⏳ [{index+1}/{len(all_discounted_products)}] Verifying: {deal['title']}")
             
             html_content = get_proxied_page(deal["raw_link"])
             
@@ -206,8 +232,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 print_time("    ❌ Dropped: Failed to load product page.")
                 continue
 
-            # --- THE HOLY GRAIL: BACKEND PAYLOAD EXTRACTION ---
-            # We find the hidden script tags that contain the exact Next.js/React state database
+            # --- BACKEND PAYLOAD EXTRACTION ---
             soup = BeautifulSoup(html_content, "html.parser")
             scripts = soup.find_all("script")
             
@@ -221,12 +246,12 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 print_time("    ❌ Dropped: Could not locate backend payload.")
                 continue
 
-            # 1. OUT OF STOCK CHECK (Direct from Database)
+            # 1. OUT OF STOCK CHECK
             if '"availabilityStatus":"OUT_OF_STOCK"' in backend_json_string.replace(" ", ""):
                 print_time("    ❌ Dropped: Backend status is Out of Stock.")
                 continue
 
-            # 2. SELLER CHECK (Direct from Database)
+            # 2. SELLER CHECK
             seller_val = "N/A"
             seller_match = re.search(r'"sellerName"\s*:\s*"([^"]+)"', backend_json_string)
             if seller_match:
@@ -238,7 +263,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
             
             deal["seller"] = "Walmart.ca"
 
-            # 3. CURRENT PRICE (Direct from Database)
+            # 3. CURRENT PRICE
             curr_val = None
             curr_match = re.search(r'"currentPrice"\s*:\s*\{[^}]*"price"\s*:\s*([\d\.]+)', backend_json_string)
             if curr_match:
@@ -250,7 +275,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
 
             deal["current_price"] = curr_val
 
-            # 4. ORIGINAL/WAS PRICE (Direct from Database)
+            # 4. ORIGINAL/WAS PRICE
             orig_val = None
             orig_match = re.search(r'"wasPrice"\s*:\s*\{[^}]*"price"\s*:\s*([\d\.]+)', backend_json_string)
             if orig_match:
@@ -281,10 +306,11 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
     return final_verified_deals
 
 def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (Backend Payload Edition)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (Deep Search Edition)")
     
-    min_discount_percent = 0.0 
-    min_original_price = 10.0
+    # Restored to your original required settings!
+    min_discount_percent = 30.0 
+    min_original_price = 50.0
 
     themes = load_lego_themes()
     master_deal_list = []
