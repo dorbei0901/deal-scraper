@@ -168,14 +168,14 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
     all_discounted_products = []
     
     page_number = 1
-    max_pages = 3  
+    # INCREASED to 6 to dig past 3rd party display cases/light kits on pages 1-2
+    max_pages = 6  
     
     while page_number <= max_pages:
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
         
-        # Injecting Walmart explicitly into the URL to block 90% of 3rd party sets instantly
-        walmart_filter = "&filters=%5B%7B%22intent%22%3A%22retailer%22%2C%22values%22%3A%5B%22Walmart%22%5D%7D%5D"
-        url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}{walmart_filter}"
+        # URL Filter removed so Walmart API doesn't panic and return empty grids
+        url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}"
         
         print_time(f"🔍 Fetching Raw HTML for Walmart Search Page {page_number}...")
         html_content = get_proxied_page(url)
@@ -187,6 +187,9 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
 
         soup = BeautifulSoup(html_content, "html.parser")
         product_links = soup.find_all("a", href=lambda href: href and ("/ip/" in href or "walmart.ca/en/ip" in href))
+        
+        # RESTORED DEBUG PRINT
+        print_time(f"🛠️ [DEBUG] Total product links found in raw HTML: {len(product_links)}")
         
         if not product_links:
             break
@@ -280,6 +283,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 continue
 
             prod_soup = BeautifulSoup(html_content, "html.parser")
+            clean_page_text = prod_soup.get_text(separator=" ", strip=True)
             
             # Target exactly where the true product page prices live
             curr_elem = prod_soup.find(attrs={"data-automation": "buybox-price"}) or \
@@ -298,7 +302,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
             else:
                 deal["discount"] = 0.0
 
-            # Strict Seller Check - Confined to the buybox to prevent false positives from global page text
+            # Strict Seller Check - Confined to the buybox to prevent false positives
             seller_val = "N/A"
             seller_elem = prod_soup.find(attrs={"data-automation": "seller-name"})
             if seller_elem:
@@ -330,7 +334,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
     return final_verified_deals
 
 def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (Targeted Accuracy Edition - Debug Mode)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (Deep Dig Debug Edition)")
     
     min_discount_percent = 0.0 
     min_original_price = 50.0
