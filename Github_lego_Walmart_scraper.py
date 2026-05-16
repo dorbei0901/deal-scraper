@@ -90,7 +90,7 @@ def parse_lego_title(raw_title):
         
     return clean_title, set_number
 
-def load_lego_themes(filename="legoproduct.txt"):
+def load_lego_themes(filename="legoproductTest.txt"):
     if not os.path.exists(filename):
         print_time(f"⚠️ {filename} not found. Defaulting to general LEGO search.")
         return [""] 
