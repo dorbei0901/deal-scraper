@@ -216,7 +216,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
     processed_urls = set()
     
     page_number = 1
-    max_pages = 50  
+    max_pages = 30  
     search_session_id = str(uuid.uuid4())[:10]
     
     while page_number <= max_pages:
