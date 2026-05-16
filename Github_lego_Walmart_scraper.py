@@ -204,7 +204,6 @@ def parse_price_robustly(price_node):
         
     try:
         if isinstance(extracted_val, str):
-            # Strip dollar signs, commas, or text before converting to float
             clean_str = re.sub(r'[^\d\.]', '', extracted_val)
             return float(clean_str) if clean_str else None
         else:
@@ -271,16 +270,23 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
 
             clean_title, set_number = parse_lego_title(raw_title)
             
-            if "42182" in set_number:
-                print_time(f"  🎯 BINGO! Successfully pulled NASA Rover (42182) from Walmart's Database!")
+            # --- NASA ROVER DIAGNOSTICS ---
+            is_nasa = "42182" in set_number
+            if is_nasa:
+                print_time(f"  🎯 BINGO! Found NASA Rover (42182)!")
+                print_time(f"  [X-RAY] NASA Rover Raw Data Dump: {json.dumps(item.get('priceInfo', {}))}")
 
+            # Expanded search to capture any format Walmart uses for prices
             price_info = item.get('priceInfo', {})
             
-            # Use the new robust parsing function
-            curr_price = parse_price_robustly(price_info.get('currentPrice'))
-            was_price = parse_price_robustly(price_info.get('wasPrice'))
+            curr_price_raw = price_info.get('currentPrice') or price_info.get('price') or price_info.get('linePrice')
+            was_price_raw = price_info.get('wasPrice') or price_info.get('regularPrice') or price_info.get('listPrice')
+
+            curr_price = parse_price_robustly(curr_price_raw)
+            was_price = parse_price_robustly(was_price_raw)
                 
             if curr_price is None:
+                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: Could not parse current price.")
                 continue
                 
             if was_price is None or was_price < curr_price:
@@ -288,6 +294,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
 
             stock_status = item.get('availabilityStatus', 'IN_STOCK')
             if stock_status == 'OUT_OF_STOCK':
+                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: Marked Out of Stock in DB.")
                 continue
 
             seller = item.get('sellerName', '')
@@ -297,6 +304,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                     seller = seller_info.get('sellerName', 'N/A')
             
             if seller and seller != "N/A" and "walmart" not in seller.lower():
+                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: 3rd Party Seller ({seller})")
                 continue
 
             discount = 0.0
@@ -304,6 +312,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 discount = round(((was_price - curr_price) / was_price) * 100, 1)
 
             if was_price < min_original_price:
+                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: MSRP ({was_price}) under {min_original_price}.")
                 continue
 
             if discount >= min_discount_percent:
@@ -318,6 +327,8 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                     "theme": keyword if keyword else "General LEGO"
                 })
                 print_time(f"    ✅ Added: {clean_title[:30]}... | ${curr_price} | Disc: {discount}%")
+            else:
+                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: Discount ({discount}%) too low.")
 
         if new_items_found == 0:
             print_time(f"🛑 No new items on page {page_number}. Ending search.")
@@ -329,7 +340,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
     return all_discounted_products
 
 def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (Database Sniffer Edition)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (X-Ray Diagnostic Edition)")
     
     min_discount_percent = 0.0 
     min_original_price = 50.0
