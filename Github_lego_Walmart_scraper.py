@@ -269,16 +269,34 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
             new_items_found += 1
 
             clean_title, set_number = parse_lego_title(raw_title)
-            
-            # --- NASA ROVER DIAGNOSTICS ---
             is_nasa = "42182" in set_number
-            if is_nasa:
-                print_time(f"  🎯 BINGO! Found NASA Rover (42182)!")
-                print_time(f"  [X-RAY] NASA Rover Raw Data Dump: {json.dumps(item.get('priceInfo', {}))}")
 
-            # Expanded search to capture any format Walmart uses for prices
-            price_info = item.get('priceInfo', {})
+            # --- COMPREHENSIVE OUT OF STOCK DRAGNET ---
+            # Converts the entire item's JSON into a flat, space-less uppercase string
+            # This catches hidden OOS flags, regardless of how deep they are nested.
+            item_json_str = json.dumps(item).replace(" ", "").upper()
+            is_oos = False
             
+            if item.get('isOutOfStock') is True: is_oos = True
+            elif '"ISOUTOFSTOCK":TRUE' in item_json_str: is_oos = True
+            elif '"AVAILABILITYSTATUS":"OUT_OF_STOCK"' in item_json_str: is_oos = True
+            elif '"AVAILABILITYSTATUS":"UNAVAILABLE"' in item_json_str: is_oos = True
+            elif '"OFFERTYPE":"OUT_OF_STOCK"' in item_json_str: is_oos = True
+            elif '"STOCKSTATUS":"OUTOFSTOCK"' in item_json_str: is_oos = True
+            
+            # Additional check for UI badges denoting Out of Stock
+            badges = item.get('badges', {})
+            if isinstance(badges, dict):
+                flags = badges.get('flags', [])
+                for flag in flags:
+                    if 'out of stock' in str(flag.get('text', '')).lower():
+                        is_oos = True
+
+            if is_oos:
+                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: Caught by OOS Dragnet.")
+                continue
+
+            price_info = item.get('priceInfo', {})
             curr_price_raw = price_info.get('currentPrice') or price_info.get('price') or price_info.get('linePrice')
             was_price_raw = price_info.get('wasPrice') or price_info.get('regularPrice') or price_info.get('listPrice')
 
@@ -286,16 +304,10 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
             was_price = parse_price_robustly(was_price_raw)
                 
             if curr_price is None:
-                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: Could not parse current price.")
                 continue
                 
             if was_price is None or was_price < curr_price:
                 was_price = curr_price
-
-            stock_status = item.get('availabilityStatus', 'IN_STOCK')
-            if stock_status == 'OUT_OF_STOCK':
-                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: Marked Out of Stock in DB.")
-                continue
 
             seller = item.get('sellerName', '')
             if not seller:
@@ -304,7 +316,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                     seller = seller_info.get('sellerName', 'N/A')
             
             if seller and seller != "N/A" and "walmart" not in seller.lower():
-                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: 3rd Party Seller ({seller})")
                 continue
 
             discount = 0.0
@@ -312,7 +323,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                 discount = round(((was_price - curr_price) / was_price) * 100, 1)
 
             if was_price < min_original_price:
-                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: MSRP ({was_price}) under {min_original_price}.")
                 continue
 
             if discount >= min_discount_percent:
@@ -327,8 +337,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
                     "theme": keyword if keyword else "General LEGO"
                 })
                 print_time(f"    ✅ Added: {clean_title[:30]}... | ${curr_price} | Disc: {discount}%")
-            else:
-                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: Discount ({discount}%) too low.")
 
         if new_items_found == 0:
             print_time(f"🛑 No new items on page {page_number}. Ending search.")
@@ -340,7 +348,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
     return all_discounted_products
 
 def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (X-Ray Diagnostic Edition)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (OOS Dragnet Edition)")
     
     min_discount_percent = 0.0 
     min_original_price = 50.0
