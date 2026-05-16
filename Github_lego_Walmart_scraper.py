@@ -5,9 +5,10 @@ import time
 import re
 import os
 import json
+import uuid
 import smtplib
 import requests
-import random
+from urllib.parse import urlencode
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
@@ -18,49 +19,49 @@ def print_time(msg):
     current_time = datetime.now().strftime("%H:%M:%S")
     print(f"[{current_time}] {msg}")
 
-def get_page_direct(url, session, max_retries=3):
-    """Fetches HTML directly using pure requests and browser spoofing (No ScraperAPI)."""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Sec-Fetch-User": "?1",
-        "Cache-Control": "max-age=0"
+def get_proxied_page(target_url, max_retries=3, session_id=None):
+    """Fetches the raw HTML via ScraperAPI."""
+    api_key = os.getenv("SCRAPER_API_KEY")
+    if not api_key:
+        print_time("⚠️ Missing SCRAPER_API_KEY. Exiting.")
+        return None
+
+    payload = {
+        'api_key': api_key,
+        'url': target_url,
+        'premium': 'true', 
+        'country_code': 'ca'
     }
+    
+    if session_id:
+        payload['session_number'] = session_id
+    
+    proxy_url = 'https://api.scraperapi.com/?' + urlencode(payload)
     
     for attempt in range(max_retries):
         try:
-            # Added a human-like delay to prevent instant IP bans
-            time.sleep(random.uniform(2.0, 3.5)) 
-            
-            response = session.get(url, headers=headers, timeout=30) 
+            response = requests.get(proxy_url, timeout=30) 
             
             if response.status_code == 200:
                 page_text = response.text
                 if "px-captcha" in page_text or "Press & Hold" in page_text:
-                    print_time(f"  ⚠️ Blocked by Walmart CAPTCHA on attempt {attempt + 1}. Retrying...")
-                    time.sleep(5)
+                    print_time(f"  ⚠️ Proxy IP hit a Captcha on attempt {attempt + 1}. Requesting new IP...")
+                    time.sleep(2)
                     continue
                 return page_text
                 
             elif response.status_code == 403:
-                print_time(f"  ❌ 403 Forbidden on attempt {attempt + 1}. Walmart's anti-bot system blocked your IP.")
-                time.sleep(5)
+                print_time("  ❌ 403 Forbidden: Your ScraperAPI key is invalid or out of credits.")
+                return None
             else:
-                print_time(f"  ⚠️ Status {response.status_code} returned on attempt {attempt + 1}. Retrying...")
-                time.sleep(3)
+                print_time(f"  ⚠️ Proxy returned status {response.status_code} on attempt {attempt + 1}. Retrying...")
+                time.sleep(2)
                 
         except requests.exceptions.Timeout:
-            print_time(f"  ⚠️ Request timed out on attempt {attempt + 1}. Retrying...")
+            print_time(f"  ⚠️ Proxy timed out on attempt {attempt + 1}. Retrying...")
         except Exception as e:
-            print_time(f"  ⚠️ Request failed: {e}")
-            time.sleep(3)
+            print_time(f"  ⚠️ Proxy request failed: {e}")
+            time.sleep(2)
             
     return None
 
@@ -215,10 +216,8 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
     processed_urls = set()
     
     page_number = 1
-    max_pages = 50  
-    
-    # Establish a persistent session so Walmart sees cookies and assumes we are a human
-    session = requests.Session()
+    max_pages = 60  
+    search_session_id = str(uuid.uuid4())[:10]
     
     while page_number <= max_pages:
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
@@ -227,7 +226,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
         url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}{walmart_filter}"
         
         print_time(f"\n🔍 Fetching Database Payload for Search Page {page_number}...")
-        html_content = get_page_direct(url, session=session)
+        html_content = get_proxied_page(url, session_id=search_session_id)
         
         if not html_content:
             page_number += 1
@@ -270,8 +269,9 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
             new_items_found += 1
 
             clean_title, set_number = parse_lego_title(raw_title)
+            is_nasa = "42182" in set_number
 
-            # --- COMPREHENSIVE OUT OF STOCK DRAGNET ---
+            # --- COMPREHENSIVE OUT OF STOCK DRAGNET (WITH NONE/NULL FIX) ---
             item_json_str = json.dumps(item).replace(" ", "").upper()
             is_oos = False
             
@@ -319,9 +319,11 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
             if was_price > curr_price:
                 discount = round(((was_price - curr_price) / was_price) * 100, 1)
 
+            # Updated Check: Will not drop items based on original price anymore
             if was_price < min_original_price:
                 continue
 
+            # Updated Check: Requires exactly 20.0% or higher discount
             if discount >= min_discount_percent:
                 all_discounted_products.append({
                     "title": clean_title,
@@ -345,10 +347,11 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
     return all_discounted_products
 
 def main():
-    print_time("🔎 Walmart LEGO Scraper (Direct Request/No-Proxy Edition)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (Production Edition)")
     
-    min_discount_percent = 20.0 
-    min_original_price = 0.0
+    # --- UPDATED CRITERIA ---
+    min_discount_percent = 20.0  # Only keep items >= 20% off
+    min_original_price = 0.0     # Removed the $50 threshold
 
     themes = load_lego_themes()
     master_deal_list = []
