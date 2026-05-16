@@ -69,12 +69,10 @@ def parse_lego_title(raw_title):
     """Extracts the Set Number and cleans the SEO fluff from the title."""
     set_number = "N/A"
     
-    # Priority: 5-digit modern LEGO numbers
     match_5 = re.search(r'\b(\d{5})\b', raw_title)
     if match_5:
         set_number = match_5.group(1)
     else:
-        # Fallback: 4-digit numbers, explicitly ignoring years (19xx, 20xx)
         numbers = re.findall(r'\b(\d{4})\b', raw_title)
         for num in numbers:
             if not (num.startswith('19') or num.startswith('20')):
@@ -178,7 +176,6 @@ def extract_products_from_backend(json_data):
     
     def recursive_search(node):
         if isinstance(node, dict):
-            # A valid product node in Walmart's backend always has these fields
             if 'name' in node and 'priceInfo' in node and 'canonicalUrl' in node:
                 extracted.append(node)
             else:
@@ -191,18 +188,41 @@ def extract_products_from_backend(json_data):
     recursive_search(json_data)
     return extracted
 
+def parse_price_robustly(price_node):
+    """Dynamically parses a price node regardless of if it's a dict, string, or float."""
+    if price_node is None:
+        return None
+        
+    extracted_val = None
+    if isinstance(price_node, dict):
+        extracted_val = price_node.get('price')
+    else:
+        extracted_val = price_node
+        
+    if extracted_val is None:
+        return None
+        
+    try:
+        if isinstance(extracted_val, str):
+            # Strip dollar signs, commas, or text before converting to float
+            clean_str = re.sub(r'[^\d\.]', '', extracted_val)
+            return float(clean_str) if clean_str else None
+        else:
+            return float(extracted_val)
+    except Exception:
+        return None
+
 def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price=50.0):
     all_discounted_products = []
     processed_urls = set()
     
     page_number = 1
-    max_pages = 10  # Search up to 10 pages deep
+    max_pages = 10  
     search_session_id = str(uuid.uuid4())[:10]
     
     while page_number <= max_pages:
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
         
-        # Enforce the URL filter to natively block most 3rd party sellers
         walmart_filter = "&filters=%5B%7B%22intent%22%3A%22retailer%22%2C%22values%22%3A%5B%22Walmart%22%5D%7D%5D"
         url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}{walmart_filter}"
         
@@ -213,7 +233,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
             page_number += 1
             continue
 
-        # Target the hidden JSON database
         soup = BeautifulSoup(html_content, "html.parser")
         script_tag = soup.find("script", id="__NEXT_DATA__")
         
@@ -245,7 +264,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
             full_link = "https://www.walmart.ca" + url_path if url_path.startswith('/') else url_path
             clean_url = full_link.split('?')[0]
             
-            # Global deduplication
             if clean_url in processed_urls:
                 continue
             processed_urls.add(clean_url)
@@ -253,44 +271,31 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
 
             clean_title, set_number = parse_lego_title(raw_title)
             
-            # NASA ROVER TRACKER
             if "42182" in set_number:
                 print_time(f"  🎯 BINGO! Successfully pulled NASA Rover (42182) from Walmart's Database!")
 
-            # Safely extract pricing from backend fields
             price_info = item.get('priceInfo', {})
             
-            curr_price = None
-            if 'currentPrice' in price_info and price_info['currentPrice']:
-                curr_price = price_info['currentPrice'].get('price')
-                
-            was_price = None
-            if 'wasPrice' in price_info and price_info['wasPrice']:
-                was_price = price_info['wasPrice'].get('price')
+            # Use the new robust parsing function
+            curr_price = parse_price_robustly(price_info.get('currentPrice'))
+            was_price = parse_price_robustly(price_info.get('wasPrice'))
                 
             if curr_price is None:
                 continue
                 
-            if was_price is None or float(was_price) < float(curr_price):
+            if was_price is None or was_price < curr_price:
                 was_price = curr_price
-                
-            curr_price = float(curr_price)
-            was_price = float(was_price)
 
-            # Check Database Stock Status
             stock_status = item.get('availabilityStatus', 'IN_STOCK')
             if stock_status == 'OUT_OF_STOCK':
                 continue
 
-            # Verify Seller from Database
             seller = item.get('sellerName', '')
             if not seller:
                 seller_info = item.get('seller', {})
                 if isinstance(seller_info, dict):
                     seller = seller_info.get('sellerName', 'N/A')
             
-            # If the filter is applied and seller is blank, it's Walmart 1st party. 
-            # If a seller name exists and it's not Walmart, block it.
             if seller and seller != "N/A" and "walmart" not in seller.lower():
                 continue
 
