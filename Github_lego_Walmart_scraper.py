@@ -211,7 +211,7 @@ def parse_price_robustly(price_node):
     except Exception:
         return None
 
-def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price=50.0):
+def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_price=0.0):
     all_discounted_products = []
     processed_urls = set()
     
@@ -282,17 +282,15 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
             elif '"OFFERTYPE":"OUT_OF_STOCK"' in item_json_str: is_oos = True
             elif '"STOCKSTATUS":"OUTOFSTOCK"' in item_json_str: is_oos = True
             
-            # Safely check UI badges, handling explicit 'null' (None) values from Walmart
             badges = item.get('badges') or {}
             if isinstance(badges, dict):
-                flags = badges.get('flags') or []  # 'or []' forces None to become an empty list
+                flags = badges.get('flags') or [] 
                 if isinstance(flags, list):
                     for flag in flags:
                         if isinstance(flag, dict) and 'out of stock' in str(flag.get('text', '')).lower():
                             is_oos = True
 
             if is_oos:
-                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: Caught by OOS Dragnet.")
                 continue
 
             price_info = item.get('priceInfo', {})
@@ -321,9 +319,11 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
             if was_price > curr_price:
                 discount = round(((was_price - curr_price) / was_price) * 100, 1)
 
+            # Updated Check: Will not drop items based on original price anymore
             if was_price < min_original_price:
                 continue
 
+            # Updated Check: Requires exactly 20.0% or higher discount
             if discount >= min_discount_percent:
                 all_discounted_products.append({
                     "title": clean_title,
@@ -347,10 +347,11 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
     return all_discounted_products
 
 def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (Null-Safe OOS Dragnet Edition)")
+    print_time("🔎 Walmart LEGO Proxy Scraper (Production Edition)")
     
-    min_discount_percent = 0.0 
-    min_original_price = 50.0
+    # --- UPDATED CRITERIA ---
+    min_discount_percent = 20.0  # Only keep items >= 20% off
+    min_original_price = 0.0     # Removed the $50 threshold
 
     themes = load_lego_themes()
     master_deal_list = []
