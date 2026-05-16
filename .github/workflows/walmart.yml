@@ -33,7 +33,7 @@ jobs:
 
       - name: Run Scraper
         env:
-          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
+          SCRAPER_API_KEYS: ${{ secrets.SCRAPER_API_KEYS }}
           AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
