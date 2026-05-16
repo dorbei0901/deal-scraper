@@ -269,4 +269,108 @@ def scrape_walmart_lego(keyword="", min_discount_percent=0.0, min_original_price
             new_items_found += 1
 
             clean_title, set_number = parse_lego_title(raw_title)
-            is_nasa = "4
+            is_nasa = "42182" in set_number
+
+            # --- COMPREHENSIVE OUT OF STOCK DRAGNET (WITH NONE/NULL FIX) ---
+            item_json_str = json.dumps(item).replace(" ", "").upper()
+            is_oos = False
+            
+            if item.get('isOutOfStock') is True: is_oos = True
+            elif '"ISOUTOFSTOCK":TRUE' in item_json_str: is_oos = True
+            elif '"AVAILABILITYSTATUS":"OUT_OF_STOCK"' in item_json_str: is_oos = True
+            elif '"AVAILABILITYSTATUS":"UNAVAILABLE"' in item_json_str: is_oos = True
+            elif '"OFFERTYPE":"OUT_OF_STOCK"' in item_json_str: is_oos = True
+            elif '"STOCKSTATUS":"OUTOFSTOCK"' in item_json_str: is_oos = True
+            
+            # Safely check UI badges, handling explicit 'null' (None) values from Walmart
+            badges = item.get('badges') or {}
+            if isinstance(badges, dict):
+                flags = badges.get('flags') or []  # 'or []' forces None to become an empty list
+                if isinstance(flags, list):
+                    for flag in flags:
+                        if isinstance(flag, dict) and 'out of stock' in str(flag.get('text', '')).lower():
+                            is_oos = True
+
+            if is_oos:
+                if is_nasa: print_time(f"    ❌ Dropped NASA Rover: Caught by OOS Dragnet.")
+                continue
+
+            price_info = item.get('priceInfo', {})
+            curr_price_raw = price_info.get('currentPrice') or price_info.get('price') or price_info.get('linePrice')
+            was_price_raw = price_info.get('wasPrice') or price_info.get('regularPrice') or price_info.get('listPrice')
+
+            curr_price = parse_price_robustly(curr_price_raw)
+            was_price = parse_price_robustly(was_price_raw)
+                
+            if curr_price is None:
+                continue
+                
+            if was_price is None or was_price < curr_price:
+                was_price = curr_price
+
+            seller = item.get('sellerName', '')
+            if not seller:
+                seller_info = item.get('seller', {})
+                if isinstance(seller_info, dict):
+                    seller = seller_info.get('sellerName', 'N/A')
+            
+            if seller and seller != "N/A" and "walmart" not in seller.lower():
+                continue
+
+            discount = 0.0
+            if was_price > curr_price:
+                discount = round(((was_price - curr_price) / was_price) * 100, 1)
+
+            if was_price < min_original_price:
+                continue
+
+            if discount >= min_discount_percent:
+                all_discounted_products.append({
+                    "title": clean_title,
+                    "set_number": set_number,
+                    "current_price": curr_price,
+                    "original_price": was_price,
+                    "discount": discount,
+                    "seller": "Walmart.ca",
+                    "link": clean_url,
+                    "theme": keyword if keyword else "General LEGO"
+                })
+                print_time(f"    ✅ Added: {clean_title[:30]}... | ${curr_price} | Disc: {discount}%")
+
+        if new_items_found == 0:
+            print_time(f"🛑 No new items on page {page_number}. Ending search.")
+            break
+
+        page_number += 1
+
+    print_time(f"--- Extraction Complete for {keyword if keyword else 'All LEGO'} ---")
+    return all_discounted_products
+
+def main():
+    print_time("🔎 Walmart LEGO Proxy Scraper (Null-Safe OOS Dragnet Edition)")
+    
+    min_discount_percent = 0.0 
+    min_original_price = 50.0
+
+    themes = load_lego_themes()
+    master_deal_list = []
+    
+    for theme in themes:
+        display_name = theme if theme else "All LEGO"
+        print(f"\n{'='*50}")
+        print_time(f"🚀 STARTING DATABASE EXTRACTION FOR: {display_name.upper()}")
+        print(f"{'='*50}")
+        
+        found_deals = scrape_walmart_lego(keyword=theme, 
+                                          min_discount_percent=min_discount_percent, 
+                                          min_original_price=min_original_price)
+        if found_deals:
+            master_deal_list.extend(found_deals)
+
+    if master_deal_list:
+        master_deal_list.sort(key=lambda x: x["discount"], reverse=True)
+    
+    send_email_report(master_deal_list)
+
+if __name__ == "__main__":
+    main()
