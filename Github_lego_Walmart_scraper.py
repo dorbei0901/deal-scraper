@@ -215,7 +215,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
     processed_urls = set()
     
     page_number = 1
-    max_pages = 30  
+    max_pages = 50  
     
     # Establish a persistent session so Walmart sees cookies and assumes we are a human
     session = requests.Session()
