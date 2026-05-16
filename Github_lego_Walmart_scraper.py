@@ -14,54 +14,92 @@ from email.mime.text import MIMEText
 from bs4 import BeautifulSoup
 from datetime import datetime
 
+# --- GLOBAL API CREDENTIAL MANAGER ---
+API_CREDENTIALS = []
+CURRENT_KEY_INDEX = 0
+
+def init_keys():
+    """Loads the comma-separated list of provider:key pairs from GitHub Secrets."""
+    global API_CREDENTIALS
+    keys_str = os.getenv("SCRAPER_API_KEYS", "")
+    if keys_str:
+        # Expected format: scraperapi:KEY1, scrapingbee:KEY2, scrapingdog:KEY3
+        for item in keys_str.split(","):
+            if ":" in item:
+                provider, key = item.split(":", 1)
+                API_CREDENTIALS.append({
+                    "provider": provider.strip().lower(), 
+                    "key": key.strip()
+                })
+    
 def print_time(msg):
     """Helper to print messages with a timestamp so you can track speed."""
     current_time = datetime.now().strftime("%H:%M:%S")
     print(f"[{current_time}] {msg}")
 
 def get_proxied_page(target_url, max_retries=3, session_id=None):
-    """Fetches the raw HTML via ScraperAPI."""
-    api_key = os.getenv("SCRAPER_API_KEY")
-    if not api_key:
-        print_time("⚠️ Missing SCRAPER_API_KEY. Exiting.")
+    """Fetches raw HTML via multiple Proxy APIs, auto-rotating across vendors."""
+    global API_CREDENTIALS, CURRENT_KEY_INDEX
+
+    if not API_CREDENTIALS:
+        print_time("⚠️ Missing or malformed SCRAPER_API_KEYS in environment. Exiting.")
         return None
 
-    payload = {
-        'api_key': api_key,
-        'url': target_url,
-        'premium': 'true', 
-        'country_code': 'ca'
-    }
-    
-    if session_id:
-        payload['session_number'] = session_id
-    
-    proxy_url = 'https://api.scraperapi.com/?' + urlencode(payload)
-    
     for attempt in range(max_retries):
+        if CURRENT_KEY_INDEX >= len(API_CREDENTIALS):
+            print_time("🚨 FATAL: All proxy providers exhausted! Stopping scraper.")
+            return None
+
+        creds = API_CREDENTIALS[CURRENT_KEY_INDEX]
+        provider = creds['provider']
+        api_key = creds['key']
+
+        # --- DYNAMIC PAYLOAD BUILDER ---
+        if provider == "scraperapi":
+            payload = {'api_key': api_key, 'url': target_url, 'premium': 'true', 'country_code': 'ca'}
+            if session_id: payload['session_number'] = session_id
+            proxy_url = 'https://api.scraperapi.com/?' + urlencode(payload)
+
+        elif provider == "scrapingbee":
+            payload = {'api_key': api_key, 'url': target_url, 'premium_proxy': 'True', 'country_code': 'ca'}
+            if session_id: payload['session_id'] = session_id
+            proxy_url = 'https://app.scrapingbee.com/api/v1/?' + urlencode(payload)
+
+        elif provider == "scrapingdog":
+            payload = {'api_key': api_key, 'url': target_url, 'premium': 'true', 'country': 'ca'}
+            proxy_url = 'https://api.scrapingdog.com/scrape?' + urlencode(payload)
+
+        else:
+            print_time(f"  ❌ Unknown proxy provider '{provider}'. Skipping to next key.")
+            CURRENT_KEY_INDEX += 1
+            continue
+
         try:
-            response = requests.get(proxy_url, timeout=30) 
+            response = requests.get(proxy_url, timeout=45) 
             
             if response.status_code == 200:
                 page_text = response.text
                 if "px-captcha" in page_text or "Press & Hold" in page_text:
-                    print_time(f"  ⚠️ Proxy IP hit a Captcha on attempt {attempt + 1}. Requesting new IP...")
-                    time.sleep(2)
+                    print_time(f"  ⚠️ Proxy IP hit a CAPTCHA via {provider}. Rotating IP...")
+                    time.sleep(3)
                     continue
                 return page_text
                 
-            elif response.status_code == 403:
-                print_time("  ❌ 403 Forbidden: Your ScraperAPI key is invalid or out of credits.")
-                return None
+            elif response.status_code in [401, 402, 403]:
+                print_time(f"  ❌ {provider.upper()} Key is out of credits or invalid.")
+                print_time(f"  🔄 Switching to Provider #{CURRENT_KEY_INDEX + 2}...")
+                CURRENT_KEY_INDEX += 1
+                continue 
+                
             else:
-                print_time(f"  ⚠️ Proxy returned status {response.status_code} on attempt {attempt + 1}. Retrying...")
-                time.sleep(2)
+                print_time(f"  ⚠️ {provider.upper()} returned status {response.status_code}. Retrying...")
+                time.sleep(3)
                 
         except requests.exceptions.Timeout:
-            print_time(f"  ⚠️ Proxy timed out on attempt {attempt + 1}. Retrying...")
+            print_time(f"  ⚠️ {provider.upper()} timed out. Retrying...")
         except Exception as e:
-            print_time(f"  ⚠️ Proxy request failed: {e}")
-            time.sleep(2)
+            print_time(f"  ⚠️ {provider.upper()} request failed: {e}")
+            time.sleep(3)
             
     return None
 
@@ -220,8 +258,10 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
     search_session_id = str(uuid.uuid4())[:10]
     
     while page_number <= max_pages:
+        if CURRENT_KEY_INDEX >= len(API_CREDENTIALS):
+            break
+
         kw_encoded = keyword.strip().replace(' ', '+') if keyword else ""
-        
         walmart_filter = "&filters=%5B%7B%22intent%22%3A%22retailer%22%2C%22values%22%3A%5B%22Walmart%22%5D%7D%5D"
         url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}{walmart_filter}"
         
@@ -269,9 +309,8 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
             new_items_found += 1
 
             clean_title, set_number = parse_lego_title(raw_title)
-            is_nasa = "42182" in set_number
 
-            # --- COMPREHENSIVE OUT OF STOCK DRAGNET (WITH NONE/NULL FIX) ---
+            # --- COMPREHENSIVE OUT OF STOCK DRAGNET ---
             item_json_str = json.dumps(item).replace(" ", "").upper()
             is_oos = False
             
@@ -319,11 +358,9 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
             if was_price > curr_price:
                 discount = round(((was_price - curr_price) / was_price) * 100, 1)
 
-            # Updated Check: Will not drop items based on original price anymore
             if was_price < min_original_price:
                 continue
 
-            # Updated Check: Requires exactly 20.0% or higher discount
             if discount >= min_discount_percent:
                 all_discounted_products.append({
                     "title": clean_title,
@@ -347,11 +384,13 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
     return all_discounted_products
 
 def main():
-    print_time("🔎 Walmart LEGO Proxy Scraper (Production Edition)")
+    init_keys()
     
-    # --- UPDATED CRITERIA ---
-    min_discount_percent = 20.0  # Only keep items >= 20% off
-    min_original_price = 0.0     # Removed the $50 threshold
+    print_time(f"🔎 Walmart LEGO Proxy Scraper (Multi-Vendor Failover Edition)")
+    print_time(f"🔑 Loaded {len(API_CREDENTIALS)} API Providers for failover operations.")
+    
+    min_discount_percent = 20.0 
+    min_original_price = 0.0     
 
     themes = load_lego_themes()
     master_deal_list = []
@@ -367,6 +406,9 @@ def main():
                                           min_original_price=min_original_price)
         if found_deals:
             master_deal_list.extend(found_deals)
+            
+        if CURRENT_KEY_INDEX >= len(API_CREDENTIALS):
+            break
 
     if master_deal_list:
         master_deal_list.sort(key=lambda x: x["discount"], reverse=True)
