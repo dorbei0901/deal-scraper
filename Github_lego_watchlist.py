@@ -160,7 +160,16 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 
     # New code: let it auto-detect the version
-    driver = uc.Chrome(options=options)
+    #driver = uc.Chrome(options=options)
+    # Fetch the exact version of Chrome running on the GitHub Actions server
+    chrome_version = get_chrome_major_version()
+    
+    # Pass the dynamic version to undetected_chromedriver to prevent mismatches
+    if chrome_version:
+        driver = uc.Chrome(options=options, version_main=chrome_version)
+    else:
+        driver = uc.Chrome(options=options)
+        
     max_retries = 3 
     
     result_deal = {
