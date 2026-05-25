@@ -13,6 +13,27 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
+import subprocess
+import re
+
+def get_chrome_major_version():
+    """Dynamically finds the major version of Chrome installed on the OS."""
+    try:
+        # Ask Linux/GitHub Actions for the Chrome version
+        process = subprocess.Popen(['google-chrome', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, _ = process.communicate()
+        version_string = stdout.decode('utf-8')
+        
+        # Extract the major version number
+        match = re.search(r'(\d+)\.', version_string)
+        if match:
+            major_version = int(match.group(1))
+            print(f"🔍 Detected Chrome Major Version: {major_version}")
+            return major_version
+    except Exception as e:
+        print(f"⚠️ Could not detect Chrome version dynamically: {e}")
+        
+    return None  # Fallback to default behavior if extraction fails
 
 def extract_price(text):
     """Extracts a float price from a text string, handling commas and currency symbols."""
@@ -125,7 +146,16 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 
     # New code: let it auto-detect the version
-    driver = uc.Chrome(options=options)
+    #driver = uc.Chrome(options=options)
+    # Fetch the exact version of Chrome running on the GitHub Actions server
+    chrome_version = get_chrome_major_version()
+    
+    # Pass the dynamic version to undetected_chromedriver to prevent mismatches
+    if chrome_version:
+        driver = uc.Chrome(options=options, version_main=chrome_version)
+    else:
+        driver = uc.Chrome(options=options)
+        
     all_discounted_products = []
     page_number = 1
     max_retries = 5 
