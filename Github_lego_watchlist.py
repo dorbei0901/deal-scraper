@@ -20,6 +20,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
+import subprocess
+import re
+
 def get_chrome_major_version():
     """Dynamically finds the major version of Chrome installed on the OS."""
     try:
