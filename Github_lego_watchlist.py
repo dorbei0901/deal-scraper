@@ -20,6 +20,25 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
+def get_chrome_major_version():
+    """Dynamically finds the major version of Chrome installed on the OS."""
+    try:
+        # Ask Linux/GitHub Actions for the Chrome version
+        process = subprocess.Popen(['google-chrome', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, _ = process.communicate()
+        version_string = stdout.decode('utf-8')
+        
+        # Extract the major version number
+        match = re.search(r'(\d+)\.', version_string)
+        if match:
+            major_version = int(match.group(1))
+            print(f"🔍 Detected Chrome Major Version: {major_version}")
+            return major_version
+    except Exception as e:
+        print(f"⚠️ Could not detect Chrome version dynamically: {e}")
+        
+    return None  # Fallback to default behavior if extraction fails
+    
 def extract_price(text):
     """Extracts a float price from a text string, handling commas and currency symbols."""
     clean_text = text.replace('CDN$', '').replace('$', '').replace(',', '').strip()
