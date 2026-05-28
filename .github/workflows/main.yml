@@ -3,7 +3,7 @@ name: Hourly Lego Deal Check
 on:
   schedule:
 # Changed from 0 to 17 to bypass GitHub's top-of-the-hour traffic jam
-    - cron: '17 15 * * *'
+    - cron: '17 */8 * * *'
   workflow_dispatch:
 
 # Fixes the Node 20 deprecation warning globally
