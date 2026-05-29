@@ -5,9 +5,10 @@ import time
 import re
 import os
 import json
-import uuid
+import random
 import smtplib
 import requests
+import math
 from urllib.parse import urlencode
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -21,28 +22,41 @@ CURRENT_KEY_INDEX = 0
 def init_keys():
     """Loads the comma-separated list of provider:key pairs from GitHub Secrets."""
     global API_CREDENTIALS
-    keys_str = os.getenv("SCRAPER_API_KEYS", "")
-    if keys_str:
-        # Expected format: scraperapi:KEY1, scrapingbee:KEY2, scrapingdog:KEY3
-        for item in keys_str.split(","):
-            if ":" in item:
-                provider, key = item.split(":", 1)
-                API_CREDENTIALS.append({
-                    "provider": provider.strip().lower(), 
-                    "key": key.strip()
-                })
+    
+    keys_str = os.getenv("SCRAPER_API_KEYS") or os.getenv("SCRAPER_API_KEY", "")
+    
+    if not keys_str:
+        print_time("🚨 FATAL ERROR: Cannot find SCRAPER_API_KEYS in the environment variables.")
+        return
+
+    for item in keys_str.split(","):
+        item = item.strip()
+        if not item:
+            continue
+            
+        if ":" in item:
+            provider, key = item.split(":", 1)
+            API_CREDENTIALS.append({
+                "provider": provider.strip().lower(), 
+                "key": key.strip()
+            })
+        else:
+            print_time(f"⚠️ WARNING: Key starting with '{item[:4]}...' has no provider prefix. Defaulting to 'scraperapi'.")
+            API_CREDENTIALS.append({
+                "provider": "scraperapi", 
+                "key": item
+            })
     
 def print_time(msg):
     """Helper to print messages with a timestamp so you can track speed."""
     current_time = datetime.now().strftime("%H:%M:%S")
     print(f"[{current_time}] {msg}")
 
-def get_proxied_page(target_url, max_retries=3, session_id=None):
+def get_proxied_page(target_url, max_retries=2, session_id=None):
     """Fetches raw HTML via multiple Proxy APIs, auto-rotating across vendors."""
     global API_CREDENTIALS, CURRENT_KEY_INDEX
 
     if not API_CREDENTIALS:
-        print_time("⚠️ Missing or malformed SCRAPER_API_KEYS in environment. Exiting.")
         return None
 
     for attempt in range(max_retries):
@@ -54,14 +68,13 @@ def get_proxied_page(target_url, max_retries=3, session_id=None):
         provider = creds['provider']
         api_key = creds['key']
 
-        # --- DYNAMIC PAYLOAD BUILDER ---
         if provider == "scraperapi":
             payload = {'api_key': api_key, 'url': target_url, 'premium': 'true', 'country_code': 'ca'}
             if session_id: payload['session_number'] = session_id
             proxy_url = 'https://api.scraperapi.com/?' + urlencode(payload)
 
         elif provider == "scrapingbee":
-            payload = {'api_key': api_key, 'url': target_url, 'premium_proxy': 'True', 'country_code': 'ca'}
+            payload = {'api_key': api_key, 'url': target_url, 'premium_proxy': 'true', 'country_code': 'ca'}
             if session_id: payload['session_id'] = session_id
             proxy_url = 'https://app.scrapingbee.com/api/v1/?' + urlencode(payload)
 
@@ -70,43 +83,46 @@ def get_proxied_page(target_url, max_retries=3, session_id=None):
             proxy_url = 'https://api.scrapingdog.com/scrape?' + urlencode(payload)
 
         else:
-            print_time(f"  ❌ Unknown proxy provider '{provider}'. Skipping to next key.")
             CURRENT_KEY_INDEX += 1
             continue
 
         try:
-            response = requests.get(proxy_url, timeout=45) 
+            response = requests.get(proxy_url, timeout=30) 
             
             if response.status_code == 200:
                 page_text = response.text
                 if "px-captcha" in page_text or "Press & Hold" in page_text:
-                    print_time(f"  ⚠️ Proxy IP hit a CAPTCHA via {provider}. Rotating IP...")
-                    time.sleep(3)
+                    print_time(f"  ⚠️ Hit a CAPTCHA via {provider}. Rotating IP...")
+                    time.sleep(2)
                     continue
                 return page_text
                 
             elif response.status_code in [401, 402, 403]:
-                print_time(f"  ❌ {provider.upper()} Key is out of credits or invalid.")
-                print_time(f"  🔄 Switching to Provider #{CURRENT_KEY_INDEX + 2}...")
+                print_time(f"  ❌ {provider.upper()} Key is out of credits or invalid. Switching providers...")
                 CURRENT_KEY_INDEX += 1
                 continue 
                 
+            elif response.status_code == 400:
+                print_time(f"  ❌ {provider.upper()} rejected the request (400 Bad Request).")
+                print_time(f"  📝 Error Details: {response.text[:150]}")
+                print_time(f"  🔄 Switching providers to avoid infinite loop...")
+                CURRENT_KEY_INDEX += 1
+                continue
+
             else:
                 print_time(f"  ⚠️ {provider.upper()} returned status {response.status_code}. Retrying...")
-                time.sleep(3)
+                time.sleep(2)
                 
         except requests.exceptions.Timeout:
             print_time(f"  ⚠️ {provider.upper()} timed out. Retrying...")
         except Exception as e:
-            print_time(f"  ⚠️ {provider.upper()} request failed: {e}")
-            time.sleep(3)
+            print_time(f"  ⚠️ {provider.upper()} request failed.")
+            time.sleep(2)
             
     return None
 
 def parse_lego_title(raw_title):
-    """Extracts the Set Number and cleans the SEO fluff from the title."""
     set_number = "N/A"
-    
     match_5 = re.search(r'\b(\d{5})\b', raw_title)
     if match_5:
         set_number = match_5.group(1)
@@ -209,9 +225,7 @@ def send_email_report(deals):
         print_time(f"❌ Failed to send email: {e}")
 
 def extract_products_from_backend(json_data):
-    """Recursively hunts through Walmart's backend JSON for product objects."""
     extracted = []
-    
     def recursive_search(node):
         if isinstance(node, dict):
             if 'name' in node and 'priceInfo' in node and 'canonicalUrl' in node:
@@ -227,7 +241,6 @@ def extract_products_from_backend(json_data):
     return extracted
 
 def parse_price_robustly(price_node):
-    """Dynamically parses a price node regardless of if it's a dict, string, or float."""
     if price_node is None:
         return None
         
@@ -255,7 +268,9 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
     
     page_number = 1
     max_pages = 60  
-    search_session_id = str(uuid.uuid4())[:10]
+    
+    # FIX: Generates a purely numeric 6-digit session ID for strict APIs like ScrapingBee
+    search_session_id = str(random.randint(100000, 999999))
     
     while page_number <= max_pages:
         if CURRENT_KEY_INDEX >= len(API_CREDENTIALS):
@@ -265,7 +280,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
         walmart_filter = "&filters=%5B%7B%22intent%22%3A%22retailer%22%2C%22values%22%3A%5B%22Walmart%22%5D%7D%5D"
         url = f"https://www.walmart.ca/en/search?q=lego+{kw_encoded}&page={page_number}{walmart_filter}"
         
-        print_time(f"\n🔍 Fetching Database Payload for Search Page {page_number}...")
+        print_time(f"\n🔍 Fetching Payload for Search Page {page_number}/{max_pages}...")
         html_content = get_proxied_page(url, session_id=search_session_id)
         
         if not html_content:
@@ -276,7 +291,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
         script_tag = soup.find("script", id="__NEXT_DATA__")
         
         if not script_tag or not script_tag.string:
-            print_time(f"🛑 Could not locate JSON Database on page {page_number}. Ending search.")
+            print_time(f"🛑 Could not locate JSON Database. Ending search for {keyword}.")
             break
             
         try:
@@ -286,11 +301,14 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
             print_time(f"❌ JSON Parse Error: {e}")
             break
 
-        print_time(f"🛠️ [DEBUG] Extracted {len(raw_products)} raw items from backend database.")
-        
-        if len(raw_products) == 0:
-            print_time(f"🛑 Database is empty. End of search results reached at page {page_number}.")
-            break
+        if page_number == 1:
+            flat_json = script_tag.string.replace(" ", "").upper()
+            count_match = re.search(r'"TOTALCOUNT":(\d+)|"TOTALRESULTS":(\d+)', flat_json)
+            if count_match:
+                total_items = int(count_match.group(1) or count_match.group(2))
+                dynamic_max = math.ceil(total_items / 40.0)
+                max_pages = min(60, dynamic_max)
+                print_time(f"  📊 Database reveals {total_items} total items. Adjusting scan limit to {max_pages} pages.")
 
         new_items_found = 0
 
@@ -310,7 +328,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
 
             clean_title, set_number = parse_lego_title(raw_title)
 
-            # --- COMPREHENSIVE OUT OF STOCK DRAGNET ---
             item_json_str = json.dumps(item).replace(" ", "").upper()
             is_oos = False
             
@@ -372,7 +389,6 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
                     "link": clean_url,
                     "theme": keyword if keyword else "General LEGO"
                 })
-                print_time(f"    ✅ Added: {clean_title[:30]}... | ${curr_price} | Disc: {discount}%")
 
         if new_items_found == 0:
             print_time(f"🛑 No new items on page {page_number}. Ending search.")
@@ -380,7 +396,7 @@ def scrape_walmart_lego(keyword="", min_discount_percent=20.0, min_original_pric
 
         page_number += 1
 
-    print_time(f"--- Extraction Complete for {keyword if keyword else 'All LEGO'} ---")
+    print_time(f"--- Extraction Complete for {keyword if keyword else 'All LEGO'}. Found {len(all_discounted_products)} deals. ---")
     return all_discounted_products
 
 def main():
