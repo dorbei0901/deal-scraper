@@ -89,16 +89,23 @@ def get_proxied_page(target_url, max_retries_per_provider=3, session_id=None):
             proxy_url = 'https://app.scrapingbee.com/api/v1/?' + urlencode(payload)
 
         elif provider == "scrapingdog":
-            payload = {'api_key': api_key, 'url': target_url, 'premium': 'true', 'country': 'ca'}
+            # UPGRADE: 'dynamic': 'true' added to force JS rendering and bypass CAPTCHAs
+            payload = {'api_key': api_key, 'url': target_url, 'premium': 'true', 'country': 'ca', 'dynamic': 'true'}
             proxy_url = 'https://api.scrapingdog.com/scrape?' + urlencode(payload)
+            
+        elif provider == "webscrapingapi":
+            # Added support for the highly recommended WebScrapingAPI (1,000 requests/month free)
+            payload = {'api_key': api_key, 'url': target_url, 'proxy_type': 'residential', 'country': 'ca'}
+            proxy_url = 'https://api.webscrapingapi.com/v1?' + urlencode(payload)
 
         else:
+            print_time(f"  ❌ Unknown provider '{provider}'. Skipping.")
             CURRENT_KEY_INDEX += 1
             network_retries = 0
             continue
 
         try:
-            response = requests.get(proxy_url, timeout=40) 
+            response = requests.get(proxy_url, timeout=45) 
             
             if response.status_code == 200:
                 page_text = response.text
@@ -110,9 +117,10 @@ def get_proxied_page(target_url, max_retries_per_provider=3, session_id=None):
                     time.sleep(2)
                     continue
                 
-                # Check for "Fake Success" (A blocked page disguised as a 200 OK)
+                # Check for "Fake Success" and extract snippet for debugging
                 if "__NEXT_DATA__" not in page_text:
-                    print_time(f"  ⚠️ {provider.upper()} returned an invalid/blocked HTML page. Rotating IP...")
+                    snippet = page_text[:150].replace('\n', ' ')
+                    print_time(f"  ⚠️ {provider.upper()} returned an invalid page. Snippet: {snippet}...")
                     network_retries += 1
                     time.sleep(2)
                     continue
