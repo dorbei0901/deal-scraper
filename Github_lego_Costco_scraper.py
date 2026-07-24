@@ -44,7 +44,8 @@ def fetch_api_data():
         # We add headers specific to this API call (e.g., expecting JSON)
         api_headers = {
             "Accept": "application/json",
-            "Referer": homepage_url # Servers often check if you came from the homepage
+            "Referer": "https://www.costco.ca/",
+            "x-api-key": "6070e843-2b6c-40fe-9912-15a86aaf2336" # The key you found
         }
         
         api_response = session.get(api_endpoint, headers=api_headers, timeout=15)
