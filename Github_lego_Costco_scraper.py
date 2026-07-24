@@ -46,7 +46,7 @@ def fetch_api_data():
             "Accept": "application/json",
             "Referer": "https://www.costco.ca/",
             "client-id": "e442e6e6-2602-4a39-937b-8b28b4457ed3",
-            "x-api-key": "134a4023-68d5-4138-8e03-8353667d5fb3" # The key you found
+            "x-api-key": "6070e843-2b6c-40fe-9912-15a86aaf2336" # The key you found
         }
         
         api_response = session.get(api_endpoint, headers=api_headers, timeout=15)
