@@ -45,6 +45,7 @@ def fetch_api_data():
         api_headers = {
             "Accept": "application/json",
             "Referer": "https://www.costco.ca/",
+            "client-id": "e442e6e6-2602-4a39-937b-8b28b4457ed3",
             "x-api-key": "134a4023-68d5-4138-8e03-8353667d5fb3" # The key you found
         }
         
