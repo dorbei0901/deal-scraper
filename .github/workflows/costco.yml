@@ -1,0 +1,38 @@
+name: Hourly Costco Deal Check
+
+on:
+  schedule:
+# Changed from 0 to 17 to bypass GitHub's top-of-the-hour traffic jam
+    - cron: '17 */8 * * *'
+  workflow_dispatch:
+
+# Fixes the Node 20 deprecation warning globally
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+# Updated from v4 to v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run Scraper
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }} # Add this line
+        run: python Github_lego_Costco_scraper.py
+        
