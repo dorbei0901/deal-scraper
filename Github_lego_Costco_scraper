@@ -1,0 +1,116 @@
+import os
+import json
+import smtplib
+import requests
+from bs4 import BeautifulSoup
+from email.message import EmailMessage
+
+# Environment variables pulled from GitHub Secrets
+COSTCO_URL = os.environ.get("COSTCO_URL")
+EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
+EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD") # Use an App Password, not your standard login
+TO_EMAIL = os.environ.get("TO_EMAIL")
+
+STATE_FILE = "state.json"
+
+def get_costco_data(url):
+    # Robust headers to help bypass basic bot detection
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive"
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed (Possible Akamai block): {e}")
+        return None
+
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Extract Title
+    title_tag = soup.find('h1', {'automation-id': 'productName'})
+    title = title_tag.text.strip() if title_tag else "Costco Product"
+
+    # Extract Price
+    price_tag = soup.find('span', {'automation-id': 'productPriceOutput'})
+    if price_tag:
+        price = price_tag.text.strip()
+    else:
+        meta_price = soup.find('meta', itemprop='price')
+        price = meta_price['content'] if meta_price else "Price Hidden/Members Only"
+
+    # Extract Availability
+    add_to_cart = soup.find('input', {'id': 'add-to-cart-btn'})
+    availability = "In Stock" if add_to_cart else "Out of Stock"
+
+    return {"title": title, "price": price, "availability": availability, "url": url}
+
+def send_email_alert(product_data, changes):
+    msg = EmailMessage()
+    msg['Subject'] = f"Costco Update: {product_data['title']}"
+    msg['From'] = EMAIL_ADDRESS
+    msg['To'] = TO_EMAIL
+
+    body = f"Updates detected for {product_data['title']}:\n\n"
+    for change in changes:
+        body += f"- {change}\n"
+    
+    body += f"\nCurrent Price: {product_data['price']}\n"
+    body += f"Status: {product_data['availability']}\n"
+    body += f"Link: {product_data['url']}"
+
+    msg.set_content(body)
+
+    # Assuming Gmail for SMTP. Update host/port if using another provider.
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+        smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+        smtp.send_message(msg)
+
+def main():
+    if not COSTCO_URL:
+        print("COSTCO_URL environment variable not set.")
+        return
+
+    print(f"Fetching data for: {COSTCO_URL}")
+    live_data = get_costco_data(COSTCO_URL)
+    
+    if not live_data:
+        print("Could not retrieve live data. Exiting.")
+        return
+
+    # Load previous state
+    previous_state = {}
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, 'r') as f:
+            previous_state = json.load(f)
+
+    changes = []
+    
+    # Compare State
+    if previous_state:
+        if live_data['price'] != previous_state.get('price'):
+            changes.append(f"Price changed from {previous_state.get('price')} to {live_data['price']}")
+        
+        if live_data['availability'] != previous_state.get('availability'):
+            changes.append(f"Availability changed from {previous_state.get('availability')} to {live_data['availability']}")
+    else:
+        changes.append("Initial tracking started.")
+
+    # Alert and Save State if modified
+    if changes:
+        print("Changes detected! Sending email...")
+        send_email_alert(live_data, changes)
+        
+        with open(STATE_FILE, 'w') as f:
+            json.dump(live_data, f, indent=4)
+        print("State file updated.")
+    else:
+        print("No changes detected.")
+
+if __name__ == "__main__":
+    main()
