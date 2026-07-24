@@ -6,10 +6,10 @@ from bs4 import BeautifulSoup
 from email.message import EmailMessage
 
 # Environment variables pulled from GitHub Secrets
-COSTCO_URL = os.environ.get("COSTCO_URL")
-EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD") # Use an App Password, not your standard login
-TO_EMAIL = os.environ.get("TO_EMAIL")
+COSTCO_URL = 'https://www.costco.ca/p/-/apple-mac-mini-m4-chip-16-gb-ram-256-gb-ssd/4000244498?langId=-24'
+EMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS")
+EMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD") # Use an App Password, not your standard login
+TO_EMAIL = os.environ.get("RECIPIENT_EMAIL")
 
 STATE_FILE = "state.json"
 
