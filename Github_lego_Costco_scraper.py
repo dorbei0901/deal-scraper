@@ -70,16 +70,34 @@ def fetch_costco_data():
 
     # --- 3. FETCH INVENTORY (To be completed) ---
     # TODO: Paste the URL from your cURL conversion here
-    inventory_endpoint = 'https://gdx-api.costco.com/.../inventory' 
+    inventory_endpoint = 'https://ecom-api.costco.com/ebusiness/inventory/v1/inventorylevels/availability/v2/5350093' 
     
     # TODO: Paste the headers and params dictionary from your cURL conversion here
     inventory_headers = {
         'Accept': '*/*',
+        'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8,zh-TW;q=0.7,zh;q=0.6',
+        'Connection': 'keep-alive',
         'Origin': 'https://www.costco.ca',
         'Referer': 'https://www.costco.ca/',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'cross-site',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+        'client-identifier': '481b1aec-aa3b-454b-b81b-48187e28f205',
+        'costco.env': 'ECOM',
+        'costco.service': 'restInventory',
+        'sec-ch-ua': '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"macOS"',
     }
     inventory_params = {
-        'item': '5350093',
+    'destinationState': 'BC',
+    'destinationPostalCode': 'V3E 0T2',
+    'destinationCountryCode': 'CA',
+    'orderItemId': '0',
+    'shippingCodes': 'USG',
+    'action': 'EDD',
+    'quantity': '1',
     }
     
     print(f"Requesting inventory data...")
