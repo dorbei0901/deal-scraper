@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from email.message import EmailMessage
 
 # GitHub Secrets for the Action
-COSTCO_URL = os.environ.get("COSTCO_URL", "https://www.costco.ca/item-5350093.html")
+COSTCO_URL = os.environ.get("COSTCO_URL", "https://www.costco.ca/p/-/apple-mac-mini-m4-chip-16-gb-ram-256-gb-ssd/4000244498?langId=-24")
 EMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS")
 EMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 TO_EMAIL = os.environ.get("RECIPIENT_EMAIL")
