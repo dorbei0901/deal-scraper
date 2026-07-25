@@ -5,6 +5,195 @@
         "price": 789.99,
         "availability": "NOSTOCK"
     },
+    "2542177": {
+        "title": "LEGO Technic Mercedes-Benz G 500",
+        "url": "https://www.costco.ca/p/-/lego-technic-mercedes-benz-g-500-professional-line-42177/4000294026",
+        "price": 289.99,
+        "availability": "NOSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2310317": {
+        "title": "LEGO Icons Land Rover Classic Defender 90",
+        "url": "https://www.costco.ca/p/-/lego-icons-land-rover-classic-defender-90-10317/4000193225",
+        "price": 329,
+        "availability": "NOSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2310300": {
+        "title": "LEGO Back to the Future Time Machine",
+        "url": "https://www.costco.ca/p/-/lego-back-to-the-future-time-machine-10300/100981584",
+        "price": 219.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2621359": {
+        "title": "LEGO Ideas Italian Riviera Building Set 21359",
+        "url": "https://www.costco.ca/p/-/lego-ideas-italian-riviera-building-set-21359-with-bonus-lego-architecture-london-21034/4000413344",
+        "price": 349,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2631218": {
+        "title": "LEGO Art Japanese Cherry Blossom Landscape 31218",
+        "url": "https://www.costco.ca/p/-/lego-art-japanese-cherry-blossom-landscape-31218/4000426773",
+        "price": 159.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2642224": {
+        "title": "LEGO Technic Porsche 911 GT3 R REXY AO Racing Car 42224",
+        "url": "https://www.costco.ca/p/-/lego-technic-porsche-911-gt3-r-rexy-ao-racing-car-42224/4000426856",
+        "price": 169.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2821064": {
+        "title": "LEGO Architecture Paris \u2013 City of Love 21064",
+        "url": "https://www.costco.ca/p/-/lego-architecture-paris-city-of-love-21064/4000426822",
+        "price": 89.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2611372": {
+        "title": "LEGO Icons Autumn Cottage Garden Building Set 11372",
+        "url": "https://www.costco.ca/p/-/lego-icons-autumn-cottage-garden-building-set-11372/4000426824",
+        "price": 139.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2521063": {
+        "title": "LEGO Architecture Neuschwanstein Castle 21063",
+        "url": "https://www.costco.ca/p/-/lego-architecture-neuschwanstein-castle-21063-with-bonus-lego-icons-leonardo-da-vincis-flying-machine-ornithopter-10363/4000394072",
+        "price": 349,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2676344": {
+        "title": "LEGO Marvel Iron Man Mark 3",
+        "url": "https://www.costco.ca/p/-/lego-marvel-iron-man-mark-3-collectors-edition-76344/4000426825",
+        "price": 149.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2611375": {
+        "title": "LEGO Icons Ferrari F2004 & Michael Schumacher Model",
+        "url": "https://www.costco.ca/p/-/lego-icons-ferrari-f2004-michael-schumacher-model-car-11375/4000439758",
+        "price": 99.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2642227": {
+        "title": "LEGO Technic Jeep Wrangler Rubicon SUV 42227",
+        "url": "https://www.costco.ca/p/-/lego-technic-jeep-wrangler-rubicon-suv-42227/4000439653",
+        "price": 78.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "1818901": {
+        "title": "LEGO City Yellow Delivery Truck 60440",
+        "url": "https://www.costco.ca/p/-/lego-city-yellow-delivery-truck-60440/4000273268",
+        "price": 99.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2675447": {
+        "title": "LEGO Star Wars The Razor Crest 75447",
+        "url": "https://www.costco.ca/p/-/lego-star-wars-the-razor-crest-75447/4201004570",
+        "price": 169.99,
+        "availability": "NOSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2375350": {
+        "title": "LEGO Star Wars Clone Commander Cody Helmet 75350",
+        "url": "https://www.costco.ca/p/-/lego-star-wars-clone-commander-cody-helmet-75350/4000149758",
+        "price": 59.99,
+        "availability": "NOSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2575435": {
+        "title": "LEGO Star Wars: The Clone Wars Battle of Felucia Separatist MTT 75435",
+        "url": "https://www.costco.ca/p/-/lego-star-wars-the-clone-wars-battle-of-felucia-separatist-mtt-75435/4000394100",
+        "price": 179.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2375348": {
+        "title": "LEGO Star Wars Mandalorian Fang Fighter vs. TIE Interceptor 75348",
+        "url": "https://www.costco.ca/p/-/lego-star-wars-mandalorian-fang-fighter-vs-tie-interceptor-75348/4000180686",
+        "price": 99.97,
+        "availability": "NOSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "1596551": {
+        "title": "LEGO Star Wars Darth Vader Helmet 75304",
+        "url": "https://www.costco.ca/p/-/lego-star-wars-darth-vader-helmet-75304/4000186515",
+        "price": 89.99,
+        "availability": "NOSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2575399": {
+        "title": "LEGO Star Wars Rebel U-Wing Starfighter 75399",
+        "url": "https://www.costco.ca/p/-/lego-star-wars-rebel-u-wing-starfighter-75399/4000368234",
+        "price": 79.99,
+        "availability": "INSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2375337": {
+        "title": "LEGO Star Wars AT-TE Walker 75337",
+        "url": "https://www.costco.ca/p/-/lego-star-wars-at-te-walker-75337/4000159982",
+        "price": 158.99,
+        "availability": "NOSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
+    "2521356": {
+        "title": "LEGO Ideas River Steamboat 21356",
+        "url": "https://www.costco.ca/p/-/lego-ideas-river-steamboat-21356/4000375835",
+        "price": 349.99,
+        "availability": "NOSTOCK",
+        "changes": [
+            "Initial tracking run. Establishing baseline."
+        ]
+    },
     "2521061": {
         "title": "LEGO Architecture Notre-Dame",
         "url": "https://www.costco.ca/p/-/lego-architecture-notre-dame-de-paris-replica-21061-with-bonus-lego-icons-leonardo-da-vincis-flying-machine-ornithopter-10363/4000294750?langId=-24",
