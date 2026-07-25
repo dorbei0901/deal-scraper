@@ -13,8 +13,9 @@ def fetch_api_data():
     })
 
     homepage_url = "https://www.costco.ca/"
-    api_endpoint = "https://gdx-api.costco.com/catalog/product/dispprice-api/v2/display-price?whsNumber=894&clientId=e442e6e6-2602-4a39-937b-8b28b4457ed3&item=5350093&country=CA&locale=en-ca&state=BC&zipCode=V3E+0T2"
-
+    ##api_endpoint = "https://gdx-api.costco.com/catalog/product/dispprice-api/v2/display-price?whsNumber=894&clientId=e442e6e6-2602-4a39-937b-8b28b4457ed3&item=5350093&country=CA&locale=en-ca&state=BC&zipCode=V3E+0T2"
+    api_endpoint = 'https://gdx-api.costco.com/catalog/product/dispprice-api/v2/display-price'
+    
     try:
         # 2. The Handshake: Hit the homepage to grab Akamai/Session cookies
         print(f"Pinging {homepage_url} for initial cookies...")
@@ -43,14 +44,34 @@ def fetch_api_data():
         
         # We add headers specific to this API call (e.g., expecting JSON)
         api_headers = {
-            "Accept": "application/json, text/plain, */*",
-            "Referer": "https://www.costco.ca/",
-            "Origin": "https://www.costco.ca",
-            "client-id": "e442e6e6-2602-4a39-937b-8b28b4457ed3",
-            "x-api-key": "6070e843-2b6c-40fe-9912-15a86aaf2336" # The key you found
+            'Accept': '*/*',
+            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8,zh-TW;q=0.7,zh;q=0.6',
+            'Connection': 'keep-alive',
+            'Origin': 'https://www.costco.ca',
+            'Referer': 'https://www.costco.ca/',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'cross-site',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+            'client-identifier': '6b262714-2ed4-4dcb-a39d-39a4b0357309',
+            'sec-ch-ua': '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"macOS"',
         }
-        
-        api_response = session.get(api_endpoint, headers=api_headers, timeout=15)
+        params = {
+            'whsNumber': '894',
+            'clientId': 'e442e6e6-2602-4a39-937b-8b28b4457ed3',
+            'item': '5350093',
+            'country': 'CA',
+            'locale': 'en-ca',
+            'state': 'BC',
+            'zipCode': 'V3E 0T2',
+        }
+        api_response = session.get(
+            api_endpoint,
+            params=params,
+            headers=api_headers,
+            timeout=15)
         api_response.raise_for_status()
         
         # Process the JSON payload
