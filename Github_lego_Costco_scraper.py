@@ -7,9 +7,9 @@ from email.message import EmailMessage
 
 # GitHub Secrets for the Action
 COSTCO_URL = os.environ.get("COSTCO_URL", "https://www.costco.ca/item-5350093.html")
-EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
-EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
-TO_EMAIL = os.environ.get("TO_EMAIL")
+EMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS")
+EMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+TO_EMAIL = os.environ.get("RECIPIENT_EMAIL")
 STATE_FILE = "state.json"
 
 def fetch_costco_data():
