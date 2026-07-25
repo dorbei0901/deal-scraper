@@ -1,116 +1,89 @@
-import os
-import json
-import smtplib
 import requests
 from bs4 import BeautifulSoup
-from email.message import EmailMessage
 
-# Environment variables pulled from GitHub Secrets
-COSTCO_URL = 'https://www.costco.ca/p/-/apple-mac-mini-m4-chip-16-gb-ram-256-gb-ssd/4000244498?langId=-24'
-EMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS")
-EMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD") # Use an App Password, not your standard login
-TO_EMAIL = os.environ.get("RECIPIENT_EMAIL")
-
-STATE_FILE = "state.json"
-
-def get_costco_data(url):
-    # Robust headers to help bypass basic bot detection
-    headers = {
+def fetch_api_data():
+    # 1. Initialize the session
+    session = requests.Session()
+    
+    # Establish base headers for the entire session
+    session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive"
-    }
+        "Accept-Encoding": "gzip, deflate, br"
+    })
 
+    homepage_url = "https://www.costco.ca/"
+    ##api_endpoint = "https://gdx-api.costco.com/catalog/product/dispprice-api/v2/display-price?whsNumber=894&clientId=e442e6e6-2602-4a39-937b-8b28b4457ed3&item=5350093&country=CA&locale=en-ca&state=BC&zipCode=V3E+0T2"
+    api_endpoint = 'https://gdx-api.costco.com/catalog/product/dispprice-api/v2/display-price'
+    
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed (Possible Akamai block): {e}")
-        return None
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-
-    # Extract Title
-    title_tag = soup.find('h1', {'automation-id': 'productName'})
-    title = title_tag.text.strip() if title_tag else "Costco Product"
-
-    # Extract Price
-    price_tag = soup.find('span', {'automation-id': 'productPriceOutput'})
-    if price_tag:
-        price = price_tag.text.strip()
-    else:
-        meta_price = soup.find('meta', itemprop='price')
-        price = meta_price['content'] if meta_price else "Price Hidden/Members Only"
-
-    # Extract Availability
-    add_to_cart = soup.find('input', {'id': 'add-to-cart-btn'})
-    availability = "In Stock" if add_to_cart else "Out of Stock"
-
-    return {"title": title, "price": price, "availability": availability, "url": url}
-
-def send_email_alert(product_data, changes):
-    msg = EmailMessage()
-    msg['Subject'] = f"Costco Update: {product_data['title']}"
-    msg['From'] = EMAIL_ADDRESS
-    msg['To'] = TO_EMAIL
-
-    body = f"Updates detected for {product_data['title']}:\n\n"
-    for change in changes:
-        body += f"- {change}\n"
-    
-    body += f"\nCurrent Price: {product_data['price']}\n"
-    body += f"Status: {product_data['availability']}\n"
-    body += f"Link: {product_data['url']}"
-
-    msg.set_content(body)
-
-    # Assuming Gmail for SMTP. Update host/port if using another provider.
-    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-        smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
-        smtp.send_message(msg)
-
-def main():
-    if not COSTCO_URL:
-        print("COSTCO_URL environment variable not set.")
-        return
-
-    print(f"Fetching data for: {COSTCO_URL}")
-    live_data = get_costco_data(COSTCO_URL)
-    
-    if not live_data:
-        print("Could not retrieve live data. Exiting.")
-        return
-
-    # Load previous state
-    previous_state = {}
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, 'r') as f:
-            previous_state = json.load(f)
-
-    changes = []
-    
-    # Compare State
-    if previous_state:
-        if live_data['price'] != previous_state.get('price'):
-            changes.append(f"Price changed from {previous_state.get('price')} to {live_data['price']}")
+        # 2. The Handshake: Hit the homepage to grab Akamai/Session cookies
+        print(f"Pinging {homepage_url} for initial cookies...")
+        homepage_response = session.get(homepage_url, timeout=15)
+        homepage_response.raise_for_status()
         
-        if live_data['availability'] != previous_state.get('availability'):
-            changes.append(f"Availability changed from {previous_state.get('availability')} to {live_data['availability']}")
-    else:
-        changes.append("Initial tracking started.")
+        # Look at the cookies automatically captured by the session
+        print("Captured Cookies:", session.cookies.get_dict())
 
-    # Alert and Save State if modified
-    if changes:
-        print("Changes detected! Sending email...")
-        send_email_alert(live_data, changes)
+        # 3. Token Extraction (Optional, but common)
+        # Sometimes APIs require a specific token passed in the header, 
+        # which is often hidden in the homepage HTML as a meta tag.
+        soup = BeautifulSoup(homepage_response.text, 'html.parser')
+        csrf_token_tag = soup.find('meta', {'name': 'csrf-token'})
         
-        with open(STATE_FILE, 'w') as f:
-            json.dump(live_data, f, indent=4)
-        print("State file updated.")
-    else:
-        print("No changes detected.")
+        if csrf_token_tag:
+            custom_token = csrf_token_tag.get('content')
+            # Inject the extracted token into the session's headers
+            session.headers.update({"X-CSRF-Token": custom_token})
+            print("Extracted and applied custom token.")
+
+        # 4. The Target Request
+        # The session will automatically attach the cookies from step 2 
+        # and the updated headers from step 3.
+        print(f"Requesting data from {api_endpoint}...")
+        
+        # We add headers specific to this API call (e.g., expecting JSON)
+        api_headers = {
+            'Accept': '*/*',
+            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8,zh-TW;q=0.7,zh;q=0.6',
+            'Connection': 'keep-alive',
+            'Origin': 'https://www.costco.ca',
+            'Referer': 'https://www.costco.ca/',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'cross-site',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+            'client-identifier': '6b262714-2ed4-4dcb-a39d-39a4b0357309',
+            'sec-ch-ua': '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"macOS"',
+        }
+        params = {
+            'whsNumber': '894',
+            'clientId': 'e442e6e6-2602-4a39-937b-8b28b4457ed3',
+            'item': '5350093',
+            'country': 'CA',
+            'locale': 'en-ca',
+            'state': 'BC',
+            'zipCode': 'V3E 0T2',
+        }
+        api_response = session.get(
+            api_endpoint,
+            params=params,
+            headers=api_headers,
+            timeout=15)
+        api_response.raise_for_status()
+        
+        # Process the JSON payload
+        data = api_response.json()
+        print("Success! Data retrieved:")
+        print(data)
+
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Error occurred: {e}")
+        print(f"Response Body: {e.response.text}")
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
-    main()
+    fetch_api_data()
