@@ -43,8 +43,9 @@ def fetch_api_data():
         
         # We add headers specific to this API call (e.g., expecting JSON)
         api_headers = {
-            "Accept": "application/json",
+            "Accept": "application/json, text/plain, */*",
             "Referer": "https://www.costco.ca/",
+            "Origin": "https://www.costco.ca",
             "client-id": "e442e6e6-2602-4a39-937b-8b28b4457ed3",
             "x-api-key": "6070e843-2b6c-40fe-9912-15a86aaf2336" # The key you found
         }
