@@ -1,7 +1,9 @@
 import os
 import json
 import smtplib
+import csv
 import requests
+from datetime import datetime
 from email.message import EmailMessage
 
 # GitHub Secrets
@@ -11,6 +13,20 @@ TO_EMAIL = os.environ.get("RECIPIENT_EMAIL")
 
 STATE_FILE = "state.json"
 CONTROL_FILE = "costco_items.json"
+HISTORY_FILE = "price_history.csv"
+
+def log_to_csv(item_number, title, price, availability):
+    """Appends a new record to the historical CSV fact table."""
+    file_exists = os.path.exists(HISTORY_FILE)
+    
+    with open(HISTORY_FILE, mode='a', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            # Write headers if the file is being created for the first time
+            writer.writerow(['Timestamp', 'Item_Number', 'Title', 'Price', 'Availability'])
+        
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        writer.writerow([timestamp, item_number, title, price, availability])
 
 def fetch_costco_data(session, item_config):
     item_number = item_config['item_number']
@@ -34,7 +50,7 @@ def fetch_costco_data(session, item_config):
         'country': 'CA',
         'locale': 'en-ca',
         'state': 'BC',
-        'zipCode': 'V3E 0T2', # Retained your Coquitlam parameter
+        'zipCode': 'V3E 0T2',
     }
     
     print(f"[{item_number}] Requesting price data...")
@@ -48,7 +64,6 @@ def fetch_costco_data(session, item_config):
         return None
 
     # --- 2. FETCH INVENTORY ---
-    # Injected the item_number dynamically into the URL string
     inventory_endpoint = f'https://ecom-api.costco.com/ebusiness/inventory/v1/inventorylevels/availability/v2/{item_number}' 
     
     inventory_headers = {
@@ -76,11 +91,17 @@ def fetch_costco_data(session, item_config):
         inv_response.raise_for_status()
         inv_data = inv_response.json()
         
-        # Extracted the specific 'availability' key you found in the logs
-        current_availability = inv_data.get('availability', 'Unknown') 
+        raw_availability = inv_data.get('availability', 'Unknown')
+        
+        # Normalize Costco's 'true' flag to a clean string
+        if raw_availability is True or str(raw_availability).lower() == 'true':
+            current_availability = "INSTOCK"
+        else:
+            current_availability = str(raw_availability).upper()
+
     except Exception as e:
         print(f"[{item_number}] Failed to fetch inventory: {e}")
-        current_availability = "Error checking stock"
+        current_availability = "ERROR"
 
     return {
         "title": item_config['title'],
@@ -89,29 +110,60 @@ def fetch_costco_data(session, item_config):
         "availability": current_availability,
     }
 
-def send_batched_email(batched_changes):
+def send_batched_email(batched_data):
+    """Sends a multipart email with HTML formatting for status colors."""
     msg = EmailMessage()
     msg['Subject'] = "Costco Tracker: Product Updates Detected"
     msg['From'] = EMAIL_ADDRESS
     msg['To'] = TO_EMAIL
 
-    body = "The following updates were detected in your tracking list:\n\n"
-    for change in batched_changes:
-        body += f"{change}\n"
-        body += "-" * 40 + "\n"
+    # 1. Build Plain Text Fallback
+    plain_body = "The following updates were detected:\n\n"
+    
+    # 2. Build HTML Body
+    html_body = """
+    <html>
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <h2>Costco Tracking Updates</h2>
+        <hr>
+    """
 
-    msg.set_content(body)
+    for item in batched_data:
+        # Plain text append
+        plain_body += f"Item: {item['title']}\n"
+        for c in item['changes']:
+            plain_body += f"- {c}\n"
+        plain_body += f"Current Price: ${item['price']}\n"
+        plain_body += f"Status: {item['availability']}\n"
+        plain_body += f"Link: {item['url']}\n"
+        plain_body += "-" * 40 + "\n"
+
+        # HTML append
+        color = "green" if item['availability'] == "INSTOCK" else "red"
+        
+        html_body += f"<h3><a href='{item['url']}' style='color: #0056b3; text-decoration: none;'>{item['title']}</a></h3>"
+        html_body += "<ul>"
+        for c in item['changes']:
+            html_body += f"<li>{c}</li>"
+        html_body += f"<li><strong>Current Price:</strong> ${item['price']}</li>"
+        html_body += f"<li><strong>Status:</strong> <span style='color: {color}; font-weight: bold;'>{item['availability']}</span></li>"
+        html_body += "</ul><hr>"
+
+    html_body += "</body></html>"
+
+    # Attach both versions (email clients will prefer the HTML version)
+    msg.set_content(plain_body)
+    msg.add_alternative(html_body, subtype='html')
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
             smtp.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
             smtp.send_message(msg)
-        print("Batched email alert sent successfully.")
+        print("Batched HTML email alert sent successfully.")
     except Exception as e:
         print(f"Failed to send email: {e}. Check credentials.")
 
 def main():
-    # 1. Load the control file
     if not os.path.exists(CONTROL_FILE):
         print(f"Control file {CONTROL_FILE} not found. Exiting.")
         return
@@ -119,7 +171,6 @@ def main():
     with open(CONTROL_FILE, 'r') as f:
         items_to_track = json.load(f)
 
-    # 2. Establish the session and perform the handshake ONCE
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
@@ -135,69 +186,62 @@ def main():
         print(f"Handshake failed: {e}. Aborting pipeline.")
         return
 
-    # 3. Load previous state
     previous_state = {}
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, 'r') as f:
             previous_state = json.load(f)
 
     current_state = {}
-    batched_alert_messages = []
+    batched_updates = []
 
-    # 4. Iterate through the control file
     for item in items_to_track:
         item_number = item['item_number']
         live_data = fetch_costco_data(session, item)
         
         if not live_data:
             print(f"Skipping {item_number} due to extraction error.")
-            # Retain old state if extraction fails so we don't trigger false alerts next run
             if item_number in previous_state:
                 current_state[item_number] = previous_state[item_number]
             continue
             
         print(f"Live Data [{item['title']}] -> Price: ${live_data['price']} | Stock: {live_data['availability']}")
-        
-        # Save to current state dictionary
         current_state[item_number] = live_data
         
-        # Compare against history
         item_history = previous_state.get(item_number)
         item_changes = []
         
+        # Determine if a state change occurred
         if item_history:
             if live_data['price'] != item_history.get('price'):
-                item_changes.append(f"Price: ${item_history.get('price')} -> ${live_data['price']}")
+                item_changes.append(f"Price changed: ${item_history.get('price')} -> ${live_data['price']}")
             
             if live_data['availability'] != item_history.get('availability'):
-                item_changes.append(f"Availability: {item_history.get('availability')} -> {live_data['availability']}")
+                item_changes.append(f"Availability changed: {item_history.get('availability')} -> {live_data['availability']}")
         else:
-            item_changes.append("New item added to tracking.")
+            item_changes.append("Initial tracking run. Establishing baseline.")
 
-        # If this specific item changed, format a block for the batched email
+        # If data changed, log it to the CSV history and queue the email
         if item_changes:
-            alert_block = f"Item: {live_data['title']}\n"
-            for c in item_changes:
-                alert_block += f"- {c}\n"
-            alert_block += f"Current Price: ${live_data['price']}\n"
-            alert_block += f"Current Status: {live_data['availability']}\n"
-            alert_block += f"Link: {live_data['url']}"
-            batched_alert_messages.append(alert_block)
+            # 1. Log to the historical CSV
+            log_to_csv(item_number, item['title'], live_data['price'], live_data['availability'])
+            
+            # 2. Package the data for the HTML email builder
+            live_data['changes'] = item_changes
+            batched_updates.append(live_data)
 
-    # 5. Alert and Save State
-    if batched_alert_messages:
+    if batched_updates:
         print("Changes detected! Triggering batched notification pipeline...")
         if EMAIL_ADDRESS and EMAIL_PASSWORD:
-            send_batched_email(batched_alert_messages)
+            send_batched_email(batched_updates)
         else:
             print("Skipping email alert: Credentials missing.")
     else:
         print("No changes detected across any items.")
         
-    # Always write the new state file
+    # Write the new state file
     with open(STATE_FILE, 'w') as f:
         json.dump(current_state, f, indent=4)
-    print("State file updated for GitHub Actions commit.")
+    print("State file updated.")
 
 if __name__ == "__main__":
     main()
