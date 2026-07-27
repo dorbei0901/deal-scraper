@@ -6,10 +6,17 @@ import requests
 from datetime import datetime
 from email.message import EmailMessage
 
-# GitHub Secrets
+# GitHub Secrets - Email
 EMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS")
 EMAIL_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
 TO_EMAIL = os.environ.get("RECIPIENT_EMAIL")
+
+# GitHub Secrets - API Credentials & Location
+PRICE_CLIENT_IDENTIFIER = os.environ.get("PRICE_CLIENT_IDENTIFIER")
+PRICE_CLIENT_ID = os.environ.get("PRICE_CLIENT_ID")
+INV_CLIENT_IDENTIFIER = os.environ.get("INV_CLIENT_IDENTIFIER")
+COSTCO_ZIP_CODE = os.environ.get("COSTCO_ZIP_CODE") # Fallback provided for local testing
+COSTCO_WHS_NUMBER = os.environ.get("COSTCO_WHS_NUMBER")
 
 STATE_FILE = "state.json"
 CONTROL_FILE = "costco_items.json"
@@ -22,7 +29,6 @@ def log_to_csv(item_number, title, price, availability):
     with open(HISTORY_FILE, mode='a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         if not file_exists:
-            # Write headers if the file is being created for the first time
             writer.writerow(['Timestamp', 'Item_Number', 'Title', 'Price', 'Availability'])
         
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -38,19 +44,19 @@ def fetch_costco_data(session, item_config):
         'Connection': 'keep-alive',
         'Origin': 'https://www.costco.ca',
         'Referer': 'https://www.costco.ca/',
-        'client-identifier': '6b262714-2ed4-4dcb-a39d-39a4b0357309',
+        'client-identifier': PRICE_CLIENT_IDENTIFIER, # Injected from Secret
         'sec-ch-ua': '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
         'sec-ch-ua-mobile': '?0',
         'sec-ch-ua-platform': '"macOS"',
     }
     price_params = {
-        'whsNumber': '894',
-        'clientId': 'e442e6e6-2602-4a39-937b-8b28b4457ed3',
+        'whsNumber': COSTCO_WHS_NUMBER, # Injected from Secret
+        'clientId': PRICE_CLIENT_ID, # Injected from Secret
         'item': item_number,
         'country': 'CA',
         'locale': 'en-ca',
         'state': 'BC',
-        'zipCode': 'V3E 0T2',
+        'zipCode': COSTCO_ZIP_CODE, # Injected from Secret
     }
     
     print(f"[{item_number}] Requesting price data...")
@@ -71,13 +77,13 @@ def fetch_costco_data(session, item_config):
         'Connection': 'keep-alive',
         'Origin': 'https://www.costco.ca',
         'Referer': 'https://www.costco.ca/',
-        'client-identifier': '481b1aec-aa3b-454b-b81b-48187e28f205',
+        'client-identifier': INV_CLIENT_IDENTIFIER, # Injected from Secret
         'costco.env': 'ECOM',
         'costco.service': 'restInventory',
     }
     inventory_params = {
         'destinationState': 'BC',
-        'destinationPostalCode': 'V3E 0T2',
+        'destinationPostalCode': COSTCO_ZIP_CODE, # Injected from Secret
         'destinationCountryCode': 'CA',
         'orderItemId': '0',
         'shippingCodes': 'USG',
@@ -111,16 +117,12 @@ def fetch_costco_data(session, item_config):
     }
 
 def send_batched_email(batched_data):
-    """Sends a multipart email with HTML formatting for status colors."""
     msg = EmailMessage()
     msg['Subject'] = "Costco Tracker: Product Updates Detected"
     msg['From'] = EMAIL_ADDRESS
     msg['To'] = TO_EMAIL
 
-    # 1. Build Plain Text Fallback
     plain_body = "The following updates were detected:\n\n"
-    
-    # 2. Build HTML Body
     html_body = """
     <html>
       <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
@@ -129,7 +131,6 @@ def send_batched_email(batched_data):
     """
 
     for item in batched_data:
-        # Plain text append
         plain_body += f"Item: {item['title']}\n"
         for c in item['changes']:
             plain_body += f"- {c}\n"
@@ -138,7 +139,6 @@ def send_batched_email(batched_data):
         plain_body += f"Link: {item['url']}\n"
         plain_body += "-" * 40 + "\n"
 
-        # HTML append
         color = "green" if item['availability'] == "INSTOCK" else "red"
         
         html_body += f"<h3><a href='{item['url']}' style='color: #0056b3; text-decoration: none;'>{item['title']}</a></h3>"
@@ -151,7 +151,6 @@ def send_batched_email(batched_data):
 
     html_body += "</body></html>"
 
-    # Attach both versions (email clients will prefer the HTML version)
     msg.set_content(plain_body)
     msg.add_alternative(html_body, subtype='html')
 
@@ -210,7 +209,6 @@ def main():
         item_history = previous_state.get(item_number)
         item_changes = []
         
-        # Determine if a state change occurred
         if item_history:
             if live_data['price'] != item_history.get('price'):
                 item_changes.append(f"Price changed: ${item_history.get('price')} -> ${live_data['price']}")
@@ -220,12 +218,8 @@ def main():
         else:
             item_changes.append("Initial tracking run. Establishing baseline.")
 
-        # If data changed, log it to the CSV history and queue the email
         if item_changes:
-            # 1. Log to the historical CSV
             log_to_csv(item_number, item['title'], live_data['price'], live_data['availability'])
-            
-            # 2. Package the data for the HTML email builder
             live_data['changes'] = item_changes
             batched_updates.append(live_data)
 
@@ -238,7 +232,6 @@ def main():
     else:
         print("No changes detected across any items.")
         
-    # Write the new state file
     with open(STATE_FILE, 'w') as f:
         json.dump(current_state, f, indent=4)
     print("State file updated.")
