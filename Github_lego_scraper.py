@@ -5,6 +5,7 @@ import time
 import re
 import os
 import smtplib
+import json
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import undetected_chromedriver as uc
@@ -14,17 +15,14 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 import subprocess
-import re
 
 def get_chrome_major_version():
     """Dynamically finds the major version of Chrome installed on the OS."""
     try:
-        # Ask Linux/GitHub Actions for the Chrome version
         process = subprocess.Popen(['google-chrome', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, _ = process.communicate()
         version_string = stdout.decode('utf-8')
         
-        # Extract the major version number
         match = re.search(r'(\d+)\.', version_string)
         if match:
             major_version = int(match.group(1))
@@ -33,13 +31,18 @@ def get_chrome_major_version():
     except Exception as e:
         print(f"⚠️ Could not detect Chrome version dynamically: {e}")
         
-    return None  # Fallback to default behavior if extraction fails
+    return None
 
 def extract_price(text):
     """Extracts a float price from a text string, handling commas and currency symbols."""
     clean_text = text.replace('CDN$', '').replace('$', '').replace(',', '').strip()
     match = re.search(r'(\d+\.?\d*)', clean_text)
     return float(match.group(1)) if match else None
+
+def extract_asin(url):
+    """Extracts the unique Amazon ASIN from a URL for deduplication."""
+    match = re.search(r'/(?:dp|gp/product)/([a-zA-Z0-9]{10})', url)
+    return match.group(1) if match else url
 
 def build_search_url(keyword: str) -> str:
     base_url = "https://www.amazon.ca/s"
@@ -81,7 +84,6 @@ def send_email_report(deals):
       table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }
       th, td { text-align: left; padding: 8px; border: 1px solid #ddd; }
       th { background-color: #f2f2f2; color: #333; }
-      tr:nth-child(even) {background-color: #f9f9f9;}
       a { color: #0066c0; text-decoration: none; font-weight: bold; }
       a:hover { text-decoration: underline; }
     </style>
@@ -97,21 +99,34 @@ def send_email_report(deals):
         <th>Discount</th>
         <th>Shipper</th>
         <th>Seller</th>
+        <th>Status Change</th>
         <th>Amazon Link</th>
       </tr>
     """
     
     for deal in deals:
+        status = deal.get("status_change", "")
+        row_style = ""
+        
+        # Color coding based on status change
+        if status == "New":
+            row_style = ' style="background-color: #d4edda;"' # Light Green
+        elif status == "Removed":
+            row_style = ' style="background-color: #e2e3e5; color: #6c757d;"' # Light Grey
+        elif status == "Price Changed":
+            row_style = ' style="background-color: #fff3cd;"' # Light Yellow
+
         html += f"""
-      <tr>
-        <td>{deal['title']}</td>
-        <td>{deal['theme'].title() if deal['theme'] else 'General LEGO'}</td>
-        <td>${deal['current_price']:.2f}</td>
-        <td>${deal['original_price']:.2f}</td>
-        <td style="color: red; font-weight: bold;">{deal['discount']}%</td>
+      <tr{row_style}>
+        <td>{deal.get('title', 'N/A')}</td>
+        <td>{deal.get('theme', 'General LEGO').title()}</td>
+        <td>${deal.get('current_price', 0):.2f}</td>
+        <td>${deal.get('original_price', 0):.2f}</td>
+        <td style="color: red; font-weight: bold;">{deal.get('discount', 0)}%</td>
         <td>{deal.get('shipper', 'N/A')}</td>
         <td>{deal.get('seller', 'N/A')}</td>
-        <td><a href="{deal['link']}">View Deal</a></td>
+        <td style="font-weight: bold;">{status}</td>
+        <td><a href="{deal.get('link', '#')}">View Deal</a></td>
       </tr>
         """
         
@@ -145,12 +160,8 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 
-    # New code: let it auto-detect the version
-    #driver = uc.Chrome(options=options)
-    # Fetch the exact version of Chrome running on the GitHub Actions server
     chrome_version = get_chrome_major_version()
     
-    # Pass the dynamic version to undetected_chromedriver to prevent mismatches
     if chrome_version:
         driver = uc.Chrome(options=options, version_main=chrome_version)
     else:
@@ -257,7 +268,6 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                                 else:
                                     link = relative_link
 
-                    # Trim the name characters after " - "
                     if title != "N/A" and " - " in title:
                         title = title.split(" - ")[0].strip()
 
@@ -325,14 +335,12 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
             else:
                 break
 
-        # After scraping all pages, visit only the qualified items to get Shipper/Seller
         if all_discounted_products:
             print(f"\n📦 Fetching Shipper & Seller info for {len(all_discounted_products)} qualified items...")
             for deal in all_discounted_products:
                 try:
                     driver.get(deal["raw_link"])
                     
-                    # Wait for the buybox container to render
                     try:
                         WebDriverWait(driver, 5).until(
                             EC.presence_of_element_located((By.ID, "desktop_buybox"))
@@ -340,7 +348,7 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                     except TimeoutException:
                         pass
                         
-                    time.sleep(2) # Buffer for JS population
+                    time.sleep(2)
                     prod_soup = BeautifulSoup(driver.page_source, "html.parser")
                     
                     buybox = prod_soup.find("div", id="desktop_buybox") or prod_soup.find("div", id="buybox")
@@ -349,9 +357,7 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                         bb_text = buybox.get_text(separator=" ", strip=True)
                         shipper_val, seller_val = "N/A", "N/A"
                         
-                        # Fallback 1: Raw Regex Text Parsing (Most reliable for hidden DOMs)
                         if "Shipper / Seller" in bb_text:
-                            # Grabs everything after "Shipper / Seller" until it hits words like Returns or Payment
                             match = re.search(r'Shipper / Seller\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
                             if match:
                                 shipper_val = seller_val = match.group(1).strip()
@@ -363,11 +369,9 @@ def scrape_amazon_lego_selenium(keyword="", min_discount_percent=30.0, min_origi
                             seller_match = re.search(r'Sold by\s+(.*?)(?:\s+Returns|\s+Payment|\s+Details|$)', bb_text)
                             if seller_match: seller_val = seller_match.group(1).strip()
                             
-                        # Extremely basic fallback just in case
                         if "Ships from and sold by Amazon" in bb_text:
                             shipper_val = seller_val = "Amazon.ca"
 
-                        # Clean up formatting if it found it
                         if "Amazon" in shipper_val: shipper_val = "Amazon.ca"
                         if "Amazon" in seller_val: seller_val = "Amazon.ca"
 
@@ -413,10 +417,75 @@ def main():
             
         time.sleep(5) 
 
-    if master_deal_list:
-        master_deal_list.sort(key=lambda x: x["discount"], reverse=True)
+    # --- 1 & 2. Filter Amazon.ca and Deduplicate ---
+    unique_deals = {}
+    for deal in master_deal_list:
+        # Require BOTH Shipper and Seller to be Amazon.ca
+        if deal.get("shipper") != "Amazon.ca" or deal.get("seller") != "Amazon.ca":
+            continue
+            
+        # Deduplicate using the ASIN as the unique identifier
+        asin = extract_asin(deal["raw_link"])
+        if asin not in unique_deals:
+            unique_deals[asin] = deal
+            
+    # --- 3. State Table Management ---
+    STATE_FILE = "state_amazon_lego.json"
+    old_state = {}
     
-    send_email_report(master_deal_list)
+    # Load previous run state
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                old_state = json.load(f)
+        except json.JSONDecodeError:
+            pass
+
+    final_email_deals = []
+    new_state = {}
+
+    # Compare current deals against old state (New, Price Changed, Unchanged)
+    for asin, deal in unique_deals.items():
+        if asin not in old_state:
+            deal["status_change"] = "New"
+        else:
+            old_deal = old_state[asin]
+            if deal["current_price"] != old_deal["current_price"]:
+                deal["status_change"] = "Price Changed"
+            else:
+                deal["status_change"] = "" # Unchanged
+        
+        final_email_deals.append(deal)
+        
+        # Save to new state table
+        new_state[asin] = {
+            "title": deal["title"],
+            "current_price": deal["current_price"],
+            "original_price": deal["original_price"],
+            "discount": deal["discount"],
+            "link": deal["link"],
+            "theme": deal["theme"],
+            "shipper": deal["shipper"],
+            "seller": deal["seller"]
+        }
+
+    # Handle Removed items
+    for asin, old_deal in old_state.items():
+        if asin not in unique_deals:
+            old_deal["status_change"] = "Removed"
+            final_email_deals.append(old_deal)
+            # Purposely omitting this from new_state so it doesn't persist
+
+    # Save the new state back to the JSON file
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(new_state, f, indent=4)
+
+    # Sort final output by discount size
+    if final_email_deals:
+        final_email_deals.sort(key=lambda x: x.get("discount", 0), reverse=True)
+    
+    # --- 4. Send Email Report ---
+    send_email_report(final_email_deals)
 
 if __name__ == "__main__":
     main()
