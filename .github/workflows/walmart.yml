@@ -1,4 +1,4 @@
-name: Daily Lego Deal Check (Walmart)
+name: Hourly Lego Walmart Deal Check
 
 on:
   schedule:
