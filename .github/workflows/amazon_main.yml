@@ -36,4 +36,10 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }} # Add this line
         run: python Github_lego_Amazon_scraper.py
-        
+
+  # ADD THIS NEW STEP:
+      - name: Commit and push state file
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update amazon lego state file"
+          file_pattern: "state_amazon_lego.json"
