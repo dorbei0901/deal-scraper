@@ -396,7 +396,7 @@ def main():
     print("🔎 Amazon LEGO Discount Scraper (GitHub Actions Edition)")
     
     min_discount_percent = 20
-    min_original_price = 10
+    min_original_price = 50
     amazon_tag = os.getenv('AMAZON_TAG', '')
 
     themes = load_lego_themes()
