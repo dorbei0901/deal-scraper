@@ -16,24 +16,27 @@ def extract_price(text):
     match = re.search(r'(\d+\.?\d*)', clean_text)
     return float(match.group(1)) if match else None
 
-def load_watchlist(filename="legowatchlist.csv"):
-    """Reads a CSV file containing LegoNumber,ASIN."""
-    watchlist = []
+def load_lego_watchlist(filename="legowatchlist.txt"):
+    """Reads specific LEGO set numbers from a text file."""
     if not os.path.exists(filename):
-        print(f"⚠️ {filename} not found. Please create it with format: LegoNumber,ASIN")
-        return watchlist 
-        
+        print(f"⚠️ {filename} not found. Please create it with one LEGO number per line.")
+        return [] 
     with open(filename, "r", encoding="utf-8") as file:
-        for line in file:
-            parts = line.strip().split(',')
-            if len(parts) == 2:
-                watchlist.append({"lego_number": parts[0].strip(), "asin": parts[1].strip()})
+        numbers = [line.strip() for line in file if line.strip()]
     
-    print(f"📁 Loaded {len(watchlist)} LEGO ASINs from {filename}")
-    return watchlist
+    print(f"📁 Loaded {len(numbers)} LEGO numbers from {filename}")
+    return numbers
 
 def format_price(price):
     return f"${price:.2f}" if price is not None else "N/A"
+
+def build_search_url(lego_number: str) -> str:
+    base_url = "https://www.amazon.ca/s"
+    # p_89%3ALEGO = Brand: LEGO
+    # p_6%3AA3DWYIK6Y9EEQB = Seller: Amazon.ca (Filters out 3rd party sellers)
+    merchant_filter = "%2Cp_6%3AA3DWYIK6Y9EEQB"
+    query = f"k=lego+{lego_number}&rh=p_89%3ALEGO{merchant_filter}"
+    return f"{base_url}?{query}"
 
 def send_email_report(deals):
     sender_email = os.getenv("GMAIL_ADDRESS")
@@ -45,6 +48,7 @@ def send_email_report(deals):
         return
 
     if not deals:
+        print("\n📭 Watchlist is empty or no deals found, no email to send.")
         return
 
     print(f"\n📧 Formatting Watchlist Report for {len(deals)} items...")
@@ -69,7 +73,7 @@ def send_email_report(deals):
         <th>Original</th>
         <th>Current</th>
         <th>Discount</th>
-        <th>Shipper/Seller</th>
+        <th>Seller</th>
         <th>Amazon Link</th>
       </tr>
     """
@@ -83,7 +87,7 @@ def send_email_report(deals):
         <td>{format_price(deal['original_price'])}</td>
         <td>{format_price(deal['current_price'])}</td>
         <td {discount_style}>{deal['discount']}%</td>
-        <td>{deal['shipper']}</td>
+        <td>{deal['seller']}</td>
         <td><a href="{deal['link']}">View Deal</a></td>
       </tr>
         """
@@ -104,21 +108,17 @@ def send_email_report(deals):
     except Exception as e:
         print(f"❌ Failed to send email: {e}")
 
-def scrape_asin_via_search(session, lego_number, asin, amazon_tag=""):
-    # Searching the ASIN directly yields exactly 1 result (the product).
-    # This bypasses the strict /dp/ WAF and uses the robust search page endpoints.
-    url = f"https://www.amazon.ca/s?k={asin}"
-    affiliate_url = f"https://www.amazon.ca/dp/{asin}?tag={amazon_tag}" if amazon_tag else f"https://www.amazon.ca/dp/{asin}"
+def scrape_lego_search(session, lego_number, amazon_tag=""):
+    url = build_search_url(lego_number)
     
     result_deal = {
-        "title": "Not Found / Blocked",
+        "title": "Not Found / Out of Stock on Amazon.ca",
         "lego_number": lego_number,
         "current_price": None,
         "original_price": None,
         "discount": 0.0,
-        "shipper": "Amazon / 3rd Party", # Search pages don't explicitly list the seller
-        "seller": "Amazon / 3rd Party",
-        "link": affiliate_url
+        "seller": "N/A",
+        "link": url
     }
 
     max_retries = 3
@@ -127,79 +127,106 @@ def scrape_asin_via_search(session, lego_number, asin, amazon_tag=""):
             response = session.get(url, timeout=15)
             soup = BeautifulSoup(response.content, "lxml")
             
-            # Detect soft CAPTCHA
+            # Detect Soft CAPTCHA Block
             page_title = soup.title.text.strip() if soup.title else ""
             if page_title == "Amazon.ca" or "captcha" in response.url.lower():
-                print(f"  ⚠️ Soft CAPTCHA triggered for {lego_number} (Attempt {attempt+1})")
+                print(f"  ⚠️ Soft CAPTCHA triggered (Attempt {attempt+1}/{max_retries}). Retrying...")
                 time.sleep(random.uniform(5.0, 10.0))
                 continue
                 
             products = soup.find_all("div", {"data-component-type": "s-search-result"})
             
             if not products:
-                print(f"  ⚠️ No search results for ASIN {asin} (Attempt {attempt+1}). Item may be OOS.")
-                time.sleep(random.uniform(3.0, 6.0))
-                continue
+                # We reached a valid page, but there are no results. Likely out of stock.
+                break
                 
-            # We found the product!
-            item = products[0] 
-            
-            # Extract Title
-            title_tag = item.find("h2")
-            if title_tag:
+            # Iterate through results to find the actual LEGO set (skipping any sponsored items)
+            item_found = False
+            for item in products[:4]:  # Check first 4 results
+                title_tag = item.find("h2")
+                if not title_tag: continue
+                
                 title_text = title_tag.get_text(strip=True)
-                if " - " in title_text:
-                    title_text = title_text.split(" - ")[0].strip()
-                result_deal["title"] = title_text
                 
-            # Extract Prices using the logic from your first script
-            current_price_span = item.find("span", class_="a-price")
-            if current_price_span:
-                offscreen = current_price_span.find("span", class_="a-offscreen")
-                if offscreen:
-                    result_deal["current_price"] = extract_price(offscreen.get_text(strip=True))
+                # Verify this is the correct LEGO set
+                if lego_number in title_text:
+                    if " - " in title_text:
+                        title_text = title_text.split(" - ")[0].strip()
+                    result_deal["title"] = title_text
+                    result_deal["seller"] = "Amazon.ca" # Guaranteed by our search filter
+                    
+                    # Extract Link
+                    link_tag = item.find("a", class_="a-link-normal s-line-clamp-4 s-link-style a-text-normal")
+                    if not link_tag:
+                        link_tag = item.find("a", class_="a-link-normal")
+                        
+                    if link_tag:
+                        raw_link = link_tag.get("href", "")
+                        full_link = f"https://www.amazon.ca{raw_link}" if raw_link.startswith("/") else raw_link
+                        
+                        if amazon_tag and "slredirect" not in full_link:
+                            separator = "&" if "?" in full_link else "?"
+                            result_deal["link"] = f"{full_link}{separator}tag={amazon_tag}"
+                        else:
+                            result_deal["link"] = full_link
 
-            original_price_span = item.find("span", class_="a-text-price")
-            if original_price_span:
-                offscreen = original_price_span.find("span", class_="a-offscreen")
-                if offscreen:
-                    result_deal["original_price"] = extract_price(offscreen.get_text(strip=True))
-            elif item.find('span', {'data-a-strike': 'true'}):
-                strike_tag = item.find('span', {'data-a-strike': 'true'})
-                offscreen = strike_tag.find('span', class_='a-offscreen')
-                if offscreen:
-                    result_deal["original_price"] = extract_price(offscreen.get_text(strip=True))
-                else:
-                    result_deal["original_price"] = extract_price(strike_tag.get_text(strip=True))
+                    # Extract Prices
+                    current_price_span = item.find("span", class_="a-price")
+                    if current_price_span:
+                        offscreen = current_price_span.find("span", class_="a-offscreen")
+                        if offscreen:
+                            result_deal["current_price"] = extract_price(offscreen.get_text(strip=True))
 
-            if result_deal["current_price"] is not None and result_deal["original_price"] is None:
-                result_deal["original_price"] = result_deal["current_price"]
+                    original_price_span = item.find("span", class_="a-text-price")
+                    if original_price_span:
+                        offscreen = original_price_span.find("span", class_="a-offscreen")
+                        if offscreen:
+                            result_deal["original_price"] = extract_price(offscreen.get_text(strip=True))
+                    elif item.find('span', {'data-a-strike': 'true'}):
+                        strike_tag = item.find('span', {'data-a-strike': 'true'})
+                        offscreen = strike_tag.find('span', class_='a-offscreen')
+                        if offscreen:
+                            result_deal["original_price"] = extract_price(offscreen.get_text(strip=True))
+                        else:
+                            result_deal["original_price"] = extract_price(strike_tag.get_text(strip=True))
 
-            if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
-                result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
+                    if result_deal["current_price"] is not None and result_deal["original_price"] is None:
+                        result_deal["original_price"] = result_deal["current_price"]
 
-            print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Discount: {result_deal['discount']}%")
-            break # Success, break out of retry loop
+                    if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
+                        result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
+
+                    print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Discount: {result_deal['discount']}%")
+                    item_found = True
+                    break 
+            
+            if item_found:
+                break # Exit the retry loop
 
         except Exception as e:
             print(f"  ⚠️ Request failed for {lego_number}: {e}")
-            time.sleep(random.uniform(3.0, 7.0))
+            time.sleep(random.uniform(4.0, 8.0))
+
+    if result_deal["current_price"] is None:
+        print(f"❌ Could not locate active Amazon.ca listing for {lego_number}")
 
     return result_deal
 
-
 def main():
-    print("🔎 Amazon LEGO ASIN Search Scraper (Fast curl-cffi Edition)")
+    print("🔎 Amazon LEGO Search Scraper (Fast curl-cffi Edition v4)")
     
     amazon_tag = os.getenv('AMAZON_TAG', '')
-    watchlist = load_watchlist()
+    watchlist = load_lego_watchlist()
     master_watchlist_deals = []
     
     if not watchlist:
         return
 
-    # Using curl_cffi to bypass basic WAF
-    session = requests.Session(impersonate="chrome116")
+    # Randomize browser fingerprinting for GitHub Actions evasion
+    browser_options = ["chrome116", "chrome120", "edge116"]
+    impersonate_choice = random.choice(browser_options)
+    
+    session = requests.Session(impersonate=impersonate_choice)
     session.headers.update({
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
@@ -210,20 +237,24 @@ def main():
         "Sec-Fetch-User": "?1"
     })
 
-    print("🍪 Warming up session...")
+    print(f"🍪 Warming up session (Impersonating {impersonate_choice})...")
     try:
         session.get("https://www.amazon.ca", timeout=15)
-        time.sleep(random.uniform(2.0, 4.0))
+        time.sleep(random.uniform(2.0, 4.5))
     except:
         pass
     
-    for item in watchlist:
-        print(f"\n🚀 Checking Watchlist: LEGO {item['lego_number']} (ASIN: {item['asin']})")
-        deal = scrape_asin_via_search(session, item["lego_number"], item["asin"], amazon_tag)
+    for number in watchlist:
+        print(f"\n🚀 Checking Watchlist: LEGO {number}")
+        
+        # Ensure Referer header looks natural for sequential searches
+        session.headers.update({"Referer": "https://www.amazon.ca/"})
+        
+        deal = scrape_lego_search(session, number, amazon_tag)
         master_watchlist_deals.append(deal)
         
-        # Short human-like delay between instant page loads
-        time.sleep(random.uniform(2.5, 5.0))
+        # Human-like delay between searches
+        time.sleep(random.uniform(3.5, 6.5))
 
     if master_watchlist_deals:
         master_watchlist_deals.sort(key=lambda x: x["discount"], reverse=True)
