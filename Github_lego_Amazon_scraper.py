@@ -24,8 +24,6 @@ def extract_asin(url):
 
 def build_search_url(keyword: str, page: int = 1) -> str:
     base_url = "https://www.amazon.ca/s"
-    # p_89%3ALEGO = Brand: LEGO
-    # p_6%3AA3DWYIK6Y9EEQB = Seller: Amazon.ca
     merchant_filter = "%2Cp_6%3AA3DWYIK6Y9EEQB"
     
     if keyword:
@@ -59,7 +57,6 @@ def send_email_report(deals):
 
     print(f"\n📧 Formatting {len(deals)} deals into an email report for {recipient_email}...")
 
-    # Group deals by theme (Product Type)
     grouped_deals = {}
     for deal in deals:
         theme = deal.get("theme", "General LEGO").title()
@@ -67,7 +64,6 @@ def send_email_report(deals):
             grouped_deals[theme] = []
         grouped_deals[theme].append(deal)
 
-    # Start building the HTML
     html = """
     <html>
     <head>
@@ -87,7 +83,6 @@ def send_email_report(deals):
     <p>Total Deals Found: <strong>{total}</strong></p>
     """.replace("{total}", str(len(deals)))
     
-    # Iterate through each group and create a separate table
     for theme, theme_deals in sorted(grouped_deals.items()):
         html += f"<h3>{theme} ({len(theme_deals)} Deals)</h3>"
         html += """
@@ -105,16 +100,17 @@ def send_email_report(deals):
         """
         
         for deal in theme_deals:
-            status = deal.get("status_change", "")
+            status = deal.get("status_change", "Unchanged")
             row_style = ""
             
-            # Color coding based on status change
             if status == "New":
-                row_style = ' style="background-color: #d4edda;"' # Light Green
+                row_style = ' style="background-color: #d4edda;"' 
             elif status == "Removed":
-                row_style = ' style="background-color: #e2e3e5; color: #6c757d;"' # Light Grey
+                row_style = ' style="background-color: #e2e3e5; color: #6c757d;"' 
             elif status == "Price Changed":
-                row_style = ' style="background-color: #fff3cd;"' # Light Yellow
+                row_style = ' style="background-color: #fff3cd;"' 
+            elif status == "Unchanged":
+                row_style = '' 
 
             html += f"""
           <tr{row_style}>
@@ -161,7 +157,6 @@ def scrape_amazon_lego_curl(session, keyword="", min_discount_percent=30.0, min_
         url = build_search_url(keyword, page_number)
         print(f"🔍 Scraping Page {page_number}: {url}")
         
-        # Update Referer to simulate sequential browsing
         if page_number > 1:
             session.headers.update({"Referer": build_search_url(keyword, page_number - 1)})
         else:
@@ -283,7 +278,6 @@ def main():
     themes = load_lego_themes()
     master_deal_list = []
     
-    # Initialize the session and establish base headers
     session = requests.Session(impersonate="chrome116")
     session.headers.update({
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
@@ -345,7 +339,7 @@ def main():
             if deal["current_price"] != old_deal["current_price"]:
                 deal["status_change"] = "Price Changed"
             else:
-                deal["status_change"] = "" 
+                deal["status_change"] = "Unchanged" 
         
         final_email_deals.append(deal)
         
