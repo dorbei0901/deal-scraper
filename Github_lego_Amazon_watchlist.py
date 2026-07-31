@@ -8,9 +8,27 @@ import os
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
-from curl_cffi import requests
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+import subprocess
 
+def get_chrome_major_version():
+    """Dynamically finds the major version of Chrome installed on the OS."""
+    try:
+        process = subprocess.Popen(['google-chrome', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        stdout, _ = process.communicate()
+        version_string = stdout.decode('utf-8')
+        match = re.search(r'(\d+)\.', version_string)
+        if match:
+            return int(match.group(1))
+    except Exception as e:
+        print(f"⚠️ Could not detect Chrome version dynamically: {e}")
+    return None
+    
 def extract_price(text):
     clean_text = text.replace('CDN$', '').replace('$', '').replace(',', '').strip()
     match = re.search(r'(\d+\.?\d*)', clean_text)
@@ -28,6 +46,8 @@ def load_watchlist(filename="legowatchlist.csv"):
             parts = line.strip().split(',')
             if len(parts) == 2:
                 watchlist.append({"lego_number": parts[0].strip(), "asin": parts[1].strip()})
+    
+    print(f"📁 Loaded {len(watchlist)} LEGO ASINs from {filename}")
     return watchlist
 
 def format_price(price):
@@ -100,75 +120,8 @@ def send_email_report(deals):
     except Exception as e:
         print(f"❌ Failed to send email: {e}")
 
-def scrape_direct_asin(session, lego_number, asin, amazon_tag=""):
-    url = f"https://www.amazon.ca/dp/{asin}"
-    affiliate_url = f"{url}?tag={amazon_tag}" if amazon_tag else url
-    
-    result_deal = {
-        "title": "Not Found / Out of Stock",
-        "lego_number": lego_number,
-        "current_price": None,
-        "original_price": None,
-        "discount": 0.0,
-        "link": affiliate_url
-    }
-
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = session.get(url, timeout=10)
-            
-            if response.status_code == 503 or "captcha" in response.url.lower():
-                print(f"  ⚠️ WAF Block on {lego_number} (Attempt {attempt+1}). Retrying...")
-                time.sleep(random.uniform(3, 7))
-                continue
-                
-            soup = BeautifulSoup(response.content, "lxml")
-            
-            # Extract Title
-            title_tag = soup.find(id="productTitle")
-            if title_tag:
-                title = title_tag.get_text(strip=True)
-                if " - " in title:
-                    title = title.split(" - ")[0].strip()
-                result_deal["title"] = title
-
-            # Extract Current Price (Buy Box)
-            price_core = soup.find("span", class_="a-price aok-align-center priceToPay")
-            if not price_core:
-                price_core = soup.find("span", class_="a-price apexPriceToPay") # Alternative format
-            
-            if price_core:
-                offscreen = price_core.find("span", class_="a-offscreen")
-                if offscreen:
-                    result_deal["current_price"] = extract_price(offscreen.get_text(strip=True))
-
-            # Extract Original/List Price
-            basis_price_block = soup.find("span", class_="basisPrice")
-            if basis_price_block:
-                offscreen = basis_price_block.find("span", class_="a-offscreen")
-                if offscreen:
-                    result_deal["original_price"] = extract_price(offscreen.get_text(strip=True))
-            
-            # Fallback for original price if basis isn't present
-            if result_deal["current_price"] and not result_deal["original_price"]:
-                result_deal["original_price"] = result_deal["current_price"]
-
-            # Calculate Discount
-            if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
-                result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
-
-            print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Discount: {result_deal['discount']}%")
-            break # Success, break out of retry loop
-
-        except Exception as e:
-            print(f"  ⚠️ Request failed for {lego_number}: {e}")
-            time.sleep(random.uniform(2, 5))
-
-    return result_deal
-
 def main():
-    print("🔎 Amazon LEGO ASIN Direct Scraper (Fast Edition)")
+    print("🔎 Amazon LEGO ASIN Scraper (undetected-chromedriver Edition)")
     
     amazon_tag = os.getenv('AMAZON_TAG', '')
     watchlist = load_watchlist()
@@ -177,27 +130,108 @@ def main():
     if not watchlist:
         return
 
-    # Using curl_cffi to bypass basic WAF
-    session = requests.Session(impersonate="chrome116")
-    session.headers.update({
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
-    })
-
-    print("🍪 Warming up session...")
-    try:
-        session.get("https://www.amazon.ca", timeout=10)
-        time.sleep(2)
-    except:
-        pass
+    options = uc.ChromeOptions()
+    options.add_argument("--headless=new") 
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
     
-    for item in watchlist:
-        print(f"\n🚀 Checking Watchlist: LEGO {item['lego_number']} (ASIN: {item['asin']})")
-        deal = scrape_direct_asin(session, item["lego_number"], item["asin"], amazon_tag)
-        master_watchlist_deals.append(deal)
+    chrome_version = get_chrome_major_version()
+    
+    print("🚀 Initializing browser...")
+    if chrome_version:
+        driver = uc.Chrome(options=options, version_main=chrome_version)
+    else:
+        driver = uc.Chrome(options=options)
+
+    try:
+        # Warmup
+        driver.get("https://www.amazon.ca")
+        time.sleep(random.uniform(3.0, 5.0))
         
-        # Short human-like delay between instant page loads
-        time.sleep(random.uniform(1.5, 3.5))
+        for item in watchlist:
+            lego_number = item['lego_number']
+            asin = item['asin']
+            
+            print(f"\n🚀 Checking Watchlist: LEGO {lego_number} (ASIN: {asin})")
+            
+            url = f"https://www.amazon.ca/dp/{asin}"
+            affiliate_url = f"{url}?tag={amazon_tag}" if amazon_tag else url
+            
+            result_deal = {
+                "title": "Not Found / Blocked",
+                "lego_number": lego_number,
+                "current_price": None,
+                "original_price": None,
+                "discount": 0.0,
+                "link": affiliate_url
+            }
+
+            max_retries = 2
+            load_successful = False
+            
+            for attempt in range(max_retries):
+                driver.get(url)
+                time.sleep(random.uniform(4.0, 6.0))
+                
+                # Check for bot challenge page
+                if "Robot Check" in driver.title or "captcha" in driver.current_url.lower():
+                    print(f"  ⚠️ Amazon CAPTCHA triggered (Attempt {attempt+1}). Retrying...")
+                    time.sleep(random.uniform(5.0, 10.0))
+                    continue
+                
+                try:
+                    # Wait explicitly for the title to ensure page rendered
+                    WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.ID, "productTitle"))
+                    )
+                    load_successful = True
+                    break
+                except TimeoutException:
+                    print(f"  ⚠️ Timeout waiting for product info (Attempt {attempt+1}). Retrying...")
+                    time.sleep(random.uniform(3.0, 6.0))
+            
+            if not load_successful:
+                print(f"❌ Failed to load valid product data for {lego_number}")
+                master_watchlist_deals.append(result_deal)
+                continue
+
+            # Parse DOM with BeautifulSoup
+            soup = BeautifulSoup(driver.page_source, "html.parser")
+            
+            title_tag = soup.find(id="productTitle")
+            if title_tag:
+                title_text = title_tag.get_text(strip=True)
+                if " - " in title_text:
+                    title_text = title_text.split(" - ")[0].strip()
+                result_deal["title"] = title_text
+
+            price_core = soup.find("span", class_="a-price aok-align-center priceToPay")
+            if not price_core:
+                price_core = soup.find("span", class_="a-price apexPriceToPay")
+            
+            if price_core:
+                offscreen = price_core.find("span", class_="a-offscreen")
+                if offscreen:
+                    result_deal["current_price"] = extract_price(offscreen.get_text(strip=True))
+
+            basis_price_block = soup.find("span", class_="basisPrice")
+            if basis_price_block:
+                offscreen = basis_price_block.find("span", class_="a-offscreen")
+                if offscreen:
+                    result_deal["original_price"] = extract_price(offscreen.get_text(strip=True))
+            
+            if result_deal["current_price"] and not result_deal["original_price"]:
+                result_deal["original_price"] = result_deal["current_price"]
+
+            if result_deal["current_price"] and result_deal["original_price"] and result_deal["original_price"] > result_deal["current_price"]:
+                result_deal["discount"] = round(((result_deal["original_price"] - result_deal["current_price"]) / result_deal["original_price"]) * 100, 1)
+
+            print(f"✅ Found {lego_number}: {result_deal['title'][:40]}... | Discount: {result_deal['discount']}%")
+            master_watchlist_deals.append(result_deal)
+
+    finally:
+        driver.quit()
 
     if master_watchlist_deals:
         master_watchlist_deals.sort(key=lambda x: x["discount"], reverse=True)
