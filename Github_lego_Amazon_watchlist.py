@@ -1,13 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[2]:
-
-
-#!/usr/bin/env python
-# coding: utf-8
-
 import time
+import random
 import re
 import os
 import smtplib
@@ -21,7 +16,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
 import subprocess
-import re
 
 def get_chrome_major_version():
     """Dynamically finds the major version of Chrome installed on the OS."""
@@ -162,12 +156,8 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
 
-    # New code: let it auto-detect the version
-    #driver = uc.Chrome(options=options)
-    # Fetch the exact version of Chrome running on the GitHub Actions server
     chrome_version = get_chrome_major_version()
     
-    # Pass the dynamic version to undetected_chromedriver to prevent mismatches
     if chrome_version:
         driver = uc.Chrome(options=options, version_main=chrome_version)
     else:
@@ -189,39 +179,49 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
     try:
         url = result_deal["link"]
         driver.get("https://www.amazon.ca")
-        time.sleep(4) 
+        time.sleep(random.uniform(3.5, 6.0)) 
         driver.execute_script("window.scrollBy(0, 500);")
-        time.sleep(2)
+        time.sleep(random.uniform(1.5, 3.0))
         
         initial_load_successful = False
+        
+        # Enhanced Retry Logic for page loading
         for attempt in range(max_retries):
-            driver.get(url)
-            time.sleep(5) 
-
             try:
-                WebDriverWait(driver, 5).until(
-                    EC.element_to_be_clickable((By.ID, "sp-cc-accept"))
-                ).click()
-                time.sleep(1)
-            except:
-                pass 
+                driver.get(url)
+                time.sleep(random.uniform(4.0, 6.5)) 
 
-            if "Something went wrong" in driver.page_source or "captcha" in driver.current_url.lower():
-                driver.refresh() 
-                time.sleep(6) 
-            else:
+                # Dismiss cookie popups if present
                 try:
+                    WebDriverWait(driver, 3).until(
+                        EC.element_to_be_clickable((By.ID, "sp-cc-accept"))
+                    ).click()
+                    time.sleep(random.uniform(0.5, 1.5))
+                except:
+                    pass 
+
+                if "Something went wrong" in driver.page_source or "captcha" in driver.current_url.lower():
+                    print(f"⚠️ WAF Block triggered for {lego_number} (Attempt {attempt + 1}/{max_retries}). Waiting before retry...")
+                    time.sleep(random.uniform(5.0, 12.0))
+                    continue
+                else:
                     WebDriverWait(driver, 8).until(
                         EC.visibility_of_element_located((By.CSS_SELECTOR, "div[data-component-type='s-search-result']"))
                     )
                     initial_load_successful = True
                     break 
-                except TimeoutException:
-                    driver.refresh()
-                    time.sleep(5)
+                    
+            except TimeoutException:
+                print(f"⚠️ Timeout loading search page for {lego_number} (Attempt {attempt + 1}/{max_retries}).")
+                time.sleep(random.uniform(4.0, 9.0))
+                continue
+            except Exception as e:
+                print(f"⚠️ Request failed: {e}. Attempt {attempt + 1}/{max_retries}")
+                time.sleep(random.uniform(4.0, 9.0))
+                continue
 
         if not initial_load_successful:
-            print(f"❌ Failed to load search page for {lego_number}.")
+            print(f"❌ Max retries reached. Failed to load search page for {lego_number}.")
             return result_deal
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -289,7 +289,7 @@ def scrape_single_lego_set(lego_number, amazon_tag=""):
                 # AMENDMENT 2: Visit the product page to get Shipper & Seller
                 try:
                     driver.get(link)
-                    time.sleep(3)
+                    time.sleep(random.uniform(3.0, 5.0))
                     prod_soup = BeautifulSoup(driver.page_source, "html.parser")
                     
                     # Look for the newer tabular buy box layout
@@ -341,7 +341,7 @@ def main():
         deal = scrape_single_lego_set(lego_number=number, amazon_tag=amazon_tag)
         master_watchlist_deals.append(deal)
             
-        time.sleep(3)
+        time.sleep(random.uniform(4.0, 7.5))
 
     if master_watchlist_deals:
         master_watchlist_deals.sort(key=lambda x: x["discount"], reverse=True)
@@ -350,10 +350,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# In[ ]:
-
-
-
-
