@@ -1,4 +1,4 @@
-name: Hourly Lego Deal Check (Watchlist)
+name: Hourly Lego Amazon Deal Check (Watchlist)
 
 on:
   schedule:
@@ -35,5 +35,5 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }} # Add this line
-        run: python Github_lego_watchlist.py
+        run: python Github_lego_Amazon_watchlist.py
         
