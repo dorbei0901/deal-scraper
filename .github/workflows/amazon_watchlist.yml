@@ -36,11 +36,3 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }} # Add this line
         run: python Github_lego_Amazon_watchlist.py
-
-# --- ADD THE NEW STEP HERE ---
-      - name: Upload Debug HTML Files
-        if: always() 
-        uses: actions/upload-artifact@v4
-        with:
-          name: amazon-debug-html
-          path: debug_lego_*.html
