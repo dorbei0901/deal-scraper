@@ -17,7 +17,6 @@ def extract_price(text):
     return float(match.group(1)) if match else None
 
 def load_lego_watchlist(filename="legowatchlist.txt"):
-    """Reads specific LEGO set numbers from a text file."""
     if not os.path.exists(filename):
         print(f"⚠️ {filename} not found. Please create it with one LEGO number per line.")
         return [] 
@@ -32,10 +31,8 @@ def format_price(price):
 
 def build_search_url(lego_number: str) -> str:
     base_url = "https://www.amazon.ca/s"
-    # p_89%3ALEGO = Brand: LEGO
-    # p_6%3AA3DWYIK6Y9EEQB = Seller: Amazon.ca (Filters out 3rd party sellers)
-    merchant_filter = "%2Cp_6%3AA3DWYIK6Y9EEQB"
-    query = f"k=lego+{lego_number}&rh=p_89%3ALEGO{merchant_filter}"
+    # p_89%3ALEGO = Brand: LEGO (Removed the p_6 Amazon-only seller filter to allow 3rd party stock)
+    query = f"k=lego+{lego_number}&rh=p_89%3ALEGO"
     return f"{base_url}?{query}"
 
 def send_email_report(deals):
@@ -73,7 +70,7 @@ def send_email_report(deals):
         <th>Original</th>
         <th>Current</th>
         <th>Discount</th>
-        <th>Seller</th>
+        <th>Seller Type</th>
         <th>Amazon Link</th>
       </tr>
     """
@@ -112,7 +109,7 @@ def scrape_lego_search(session, lego_number, amazon_tag=""):
     url = build_search_url(lego_number)
     
     result_deal = {
-        "title": "Not Found / Out of Stock on Amazon.ca",
+        "title": "Not Found",
         "lego_number": lego_number,
         "current_price": None,
         "original_price": None,
@@ -127,7 +124,6 @@ def scrape_lego_search(session, lego_number, amazon_tag=""):
             response = session.get(url, timeout=15)
             soup = BeautifulSoup(response.content, "lxml")
             
-            # Detect Soft CAPTCHA Block
             page_title = soup.title.text.strip() if soup.title else ""
             if page_title == "Amazon.ca" or "captcha" in response.url.lower():
                 print(f"  ⚠️ Soft CAPTCHA triggered (Attempt {attempt+1}/{max_retries}). Retrying...")
@@ -137,25 +133,27 @@ def scrape_lego_search(session, lego_number, amazon_tag=""):
             products = soup.find_all("div", {"data-component-type": "s-search-result"})
             
             if not products:
-                # We reached a valid page, but there are no results. Likely out of stock.
-                break
+                # DEBUG DUMP: If no products are found but no obvious CAPTCHA, save the HTML
+                debug_file = f"debug_lego_{lego_number}.html"
+                with open(debug_file, "w", encoding="utf-8") as f:
+                    f.write(response.text)
+                print(f"  ⚠️ No products found in DOM on attempt {attempt+1}. Saved HTML to {debug_file} for inspection.")
+                time.sleep(random.uniform(3.0, 6.0))
+                continue
                 
-            # Iterate through results to find the actual LEGO set (skipping any sponsored items)
             item_found = False
-            for item in products[:4]:  # Check first 4 results
+            for item in products[:5]: 
                 title_tag = item.find("h2")
                 if not title_tag: continue
                 
                 title_text = title_tag.get_text(strip=True)
                 
-                # Verify this is the correct LEGO set
                 if lego_number in title_text:
                     if " - " in title_text:
                         title_text = title_text.split(" - ")[0].strip()
                     result_deal["title"] = title_text
-                    result_deal["seller"] = "Amazon.ca" # Guaranteed by our search filter
+                    result_deal["seller"] = "Amazon or 3rd Party" 
                     
-                    # Extract Link
                     link_tag = item.find("a", class_="a-link-normal s-line-clamp-4 s-link-style a-text-normal")
                     if not link_tag:
                         link_tag = item.find("a", class_="a-link-normal")
@@ -170,7 +168,6 @@ def scrape_lego_search(session, lego_number, amazon_tag=""):
                         else:
                             result_deal["link"] = full_link
 
-                    # Extract Prices
                     current_price_span = item.find("span", class_="a-price")
                     if current_price_span:
                         offscreen = current_price_span.find("span", class_="a-offscreen")
@@ -201,19 +198,19 @@ def scrape_lego_search(session, lego_number, amazon_tag=""):
                     break 
             
             if item_found:
-                break # Exit the retry loop
+                break 
 
         except Exception as e:
             print(f"  ⚠️ Request failed for {lego_number}: {e}")
             time.sleep(random.uniform(4.0, 8.0))
 
     if result_deal["current_price"] is None:
-        print(f"❌ Could not locate active Amazon.ca listing for {lego_number}")
+        print(f"❌ Could not extract price for {lego_number}. (Check debug_lego_{lego_number}.html)")
 
     return result_deal
 
 def main():
-    print("🔎 Amazon LEGO Search Scraper (Fast curl-cffi Edition v4)")
+    print("🔎 Amazon LEGO Search Scraper (Fast curl-cffi Edition v5 - Debug Mode)")
     
     amazon_tag = os.getenv('AMAZON_TAG', '')
     watchlist = load_lego_watchlist()
@@ -222,7 +219,6 @@ def main():
     if not watchlist:
         return
 
-    # Randomize browser fingerprinting for GitHub Actions evasion
     browser_options = ["chrome116", "chrome120", "edge116"]
     impersonate_choice = random.choice(browser_options)
     
@@ -247,19 +243,19 @@ def main():
     for number in watchlist:
         print(f"\n🚀 Checking Watchlist: LEGO {number}")
         
-        # Ensure Referer header looks natural for sequential searches
         session.headers.update({"Referer": "https://www.amazon.ca/"})
-        
         deal = scrape_lego_search(session, number, amazon_tag)
         master_watchlist_deals.append(deal)
         
-        # Human-like delay between searches
         time.sleep(random.uniform(3.5, 6.5))
 
     if master_watchlist_deals:
-        master_watchlist_deals.sort(key=lambda x: x["discount"], reverse=True)
-    
-    send_email_report(master_watchlist_deals)
+        # Only email items where we actually found a price
+        valid_deals = [d for d in master_watchlist_deals if d["current_price"] is not None]
+        valid_deals.sort(key=lambda x: x["discount"], reverse=True)
+        send_email_report(valid_deals)
+    else:
+        print("\n📭 No valid data extracted today.")
 
 if __name__ == "__main__":
     main()
