@@ -133,28 +133,25 @@ def send_email_report(deals):
     except Exception as e:
         print(f"❌ Failed to send email: {e}")
 
-def scrape_amazon_lego_curl(keyword="", min_discount_percent=30.0, min_original_price=50.0, amazon_tag=""):
+def scrape_amazon_lego_curl(session, keyword="", min_discount_percent=30.0, min_original_price=50.0, amazon_tag=""):
     all_discounted_products = []
     page_number = 1
     
-    # Optional: If GitHub Actions IPs are completely banned, you can route curl-cffi through a proxy
-    # proxies = {"http": os.getenv("PROXY_URL"), "https": os.getenv("PROXY_URL")} if os.getenv("PROXY_URL") else None
-
     while True:
         url = build_search_url(keyword, page_number)
         print(f"🔍 Scraping Page {page_number}: {url}")
         
+        # Update Referer to simulate sequential browsing
+        if page_number > 1:
+            session.headers.update({"Referer": build_search_url(keyword, page_number - 1)})
+        else:
+            session.headers.update({"Referer": "https://www.amazon.ca/"})
+        
         try:
-            # Impersonate a real browser TLS handshake
-            response = requests.get(
-                url, 
-                impersonate="chrome116", 
-                timeout=15,
-                # proxies=proxies
-            )
+            response = session.get(url, timeout=15)
             
             if response.status_code == 503 or "captcha" in response.url.lower():
-                print(f"⚠️ WAF Block triggered on page {page_number}. Consider integrating a residential proxy.")
+                print(f"⚠️ WAF Block triggered on page {page_number}. Amazon is aggressively blocking the IP.")
                 break
 
             soup = BeautifulSoup(response.content, "lxml")
@@ -233,8 +230,8 @@ def scrape_amazon_lego_curl(keyword="", min_discount_percent=30.0, min_original_
                                 "discount": discount,
                                 "link": final_link,
                                 "raw_link": link,
-                                "shipper": "Amazon.ca", # Hardcoded due to URL filter
-                                "seller": "Amazon.ca",  # Hardcoded due to URL filter
+                                "shipper": "Amazon.ca", 
+                                "seller": "Amazon.ca",  
                                 "theme": keyword if keyword else "General LEGO" 
                             })
 
@@ -244,7 +241,7 @@ def scrape_amazon_lego_curl(keyword="", min_discount_percent=30.0, min_original_
             next_button = soup.find("a", class_="s-pagination-next")
             if next_button and "s-pagination-disabled" not in next_button.get("class", []):
                 page_number += 1
-                time.sleep(2) # Brief polite delay between pages
+                time.sleep(3) 
             else:
                 break
 
@@ -257,7 +254,7 @@ def scrape_amazon_lego_curl(keyword="", min_discount_percent=30.0, min_original_
     return all_discounted_products
 
 def main():
-    print("🔎 Amazon LEGO Discount Scraper (curl-cffi Edition)")
+    print("🔎 Amazon LEGO Discount Scraper (curl-cffi Edition - WAF Optimized)")
     
     min_discount_percent = 20
     min_original_price = 50
@@ -266,30 +263,47 @@ def main():
     themes = load_lego_themes()
     master_deal_list = []
     
+    # Initialize the session and establish base headers
+    session = requests.Session(impersonate="chrome116")
+    session.headers.update({
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1"
+    })
+
+    print("🍪 Warming up session with Amazon.ca homepage to collect AWS WAF tokens...")
+    try:
+        session.get("https://www.amazon.ca", timeout=15)
+        time.sleep(4)
+    except Exception as e:
+        print(f"⚠️ Homepage warmup failed: {e}")
+    
     for theme in themes:
         display_name = theme if theme else "All LEGO"
         print(f"\n{'='*50}")
         print(f"🚀 STARTING SEARCH FOR: {display_name.upper()}")
         print(f"{'='*50}")
         
-        found_deals = scrape_amazon_lego_curl(keyword=theme, 
+        found_deals = scrape_amazon_lego_curl(session=session,
+                                              keyword=theme, 
                                               min_discount_percent=min_discount_percent, 
                                               min_original_price=min_original_price,
                                               amazon_tag=amazon_tag)
         if found_deals:
             master_deal_list.extend(found_deals)
             
-        time.sleep(3) # Polite delay between theme searches
+        time.sleep(4) 
 
-    # --- Deduplicate ---
-    # Since shipper/seller are guaranteed by the URL, we skip that filtering step
     unique_deals = {}
     for deal in master_deal_list:
         asin = extract_asin(deal["raw_link"])
         if asin not in unique_deals:
             unique_deals[asin] = deal
             
-    # --- State Table Management ---
     STATE_FILE = "state_amazon_lego.json"
     old_state = {}
     
@@ -311,7 +325,7 @@ def main():
             if deal["current_price"] != old_deal["current_price"]:
                 deal["status_change"] = "Price Changed"
             else:
-                deal["status_change"] = "" # Unchanged
+                deal["status_change"] = "" 
         
         final_email_deals.append(deal)
         
@@ -337,7 +351,6 @@ def main():
     if final_email_deals:
         final_email_deals.sort(key=lambda x: x.get("discount", 0), reverse=True)
     
-    # --- Send Email Report ---
     send_email_report(final_email_deals)
 
 if __name__ == "__main__":
