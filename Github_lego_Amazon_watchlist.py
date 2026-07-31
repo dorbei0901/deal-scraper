@@ -86,7 +86,7 @@ def send_email_report(deals):
         status = deal.get("status_change", "")
         row_style = ""
         
-        # Color coding based on status change from GitHub-Amazon v2
+        # Color coding based on status change
         if status == "New":
             row_style = ' style="background-color: #d4edda;"' # Light Green
         elif status == "Removed":
@@ -245,10 +245,8 @@ def main():
     master_deal_list = []
     
     # Initialize the session and establish base headers exactly as v2
-    browser_options = ["chrome116", "chrome120", "edge116"]
-    impersonate_choice = random.choice(browser_options)
-    
-    session = requests.Session(impersonate=impersonate_choice)
+    # Strictly using chrome116 to avoid 'edge116' impersonation crash
+    session = requests.Session(impersonate="chrome116")
     session.headers.update({
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
@@ -259,7 +257,7 @@ def main():
         "Upgrade-Insecure-Requests": "1"
     })
 
-    print(f"🍪 Warming up session (Impersonating {impersonate_choice}) with Amazon.ca homepage...")
+    print("🍪 Warming up session (Impersonating chrome116) with Amazon.ca homepage...")
     try:
         session.get("https://www.amazon.ca", timeout=15)
         time.sleep(random.uniform(3, 6))
