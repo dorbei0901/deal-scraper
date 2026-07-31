@@ -3,7 +3,7 @@ name: Hourly Lego Amazon Deal Check
 on:
   schedule:
 # Changed from 0 to 17 to bypass GitHub's top-of-the-hour traffic jam
-    - cron: '17 */8 * * *'
+    - cron: '17 */3 * * *'
   workflow_dispatch:
 
 # ADD THIS BLOCK
