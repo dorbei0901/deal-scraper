@@ -30,3 +30,5 @@ Timestamp,Item_Number,Title,Price,Availability
 2026-07-25 09:08:45,2575408,LEGO Star Wars Jango Fett Helmet 75408,79.99,INSTOCK
 2026-07-25 09:08:46,2575402,LEGO Star Wars: Revenge of the Sith ARC-170 Starfighter Spaceship 75402,79.99,INSTOCK
 2026-07-25 09:08:47,1662186,LEGO Disney and Pixar ‘Up' House 43217,69.99,INSTOCK
+2026-08-02 08:38:32,2642227,LEGO Technic Jeep Wrangler Rubicon SUV 42227,78.99,ERROR
+2026-08-02 08:38:35,2375337,LEGO Star Wars AT-TE Walker 75337,158.99,ERROR

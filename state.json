@@ -75,7 +75,10 @@
         "title": "LEGO Technic Jeep Wrangler Rubicon SUV 42227",
         "url": "https://www.costco.ca/p/-/lego-technic-jeep-wrangler-rubicon-suv-42227/4000439653",
         "price": 78.99,
-        "availability": "INSTOCK"
+        "availability": "ERROR",
+        "changes": [
+            "Availability changed: INSTOCK -> ERROR"
+        ]
     },
     "1818901": {
         "title": "LEGO City Yellow Delivery Truck 60440",
@@ -123,7 +126,10 @@
         "title": "LEGO Star Wars AT-TE Walker 75337",
         "url": "https://www.costco.ca/p/-/lego-star-wars-at-te-walker-75337/4000159982",
         "price": 158.99,
-        "availability": "NOSTOCK"
+        "availability": "ERROR",
+        "changes": [
+            "Availability changed: NOSTOCK -> ERROR"
+        ]
     },
     "2521356": {
         "title": "LEGO Ideas River Steamboat 21356",
