@@ -75,9 +75,9 @@
         "title": "LEGO Technic Jeep Wrangler Rubicon SUV 42227",
         "url": "https://www.costco.ca/p/-/lego-technic-jeep-wrangler-rubicon-suv-42227/4000439653",
         "price": 78.99,
-        "availability": "ERROR",
+        "availability": "INSTOCK",
         "changes": [
-            "Availability changed: INSTOCK -> ERROR"
+            "Availability changed: ERROR -> INSTOCK"
         ]
     },
     "1818901": {
@@ -126,9 +126,9 @@
         "title": "LEGO Star Wars AT-TE Walker 75337",
         "url": "https://www.costco.ca/p/-/lego-star-wars-at-te-walker-75337/4000159982",
         "price": 158.99,
-        "availability": "ERROR",
+        "availability": "NOSTOCK",
         "changes": [
-            "Availability changed: NOSTOCK -> ERROR"
+            "Availability changed: ERROR -> NOSTOCK"
         ]
     },
     "2521356": {
