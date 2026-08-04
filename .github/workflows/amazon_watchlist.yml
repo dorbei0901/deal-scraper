@@ -11,28 +11,23 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
+  scrape:
+    runs-on: macos-latest # <-- This is the magic bullet
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-# Updated from v4 to v5
+        
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        run: pip install curl_cffi beautifulsoup4
 
-      - name: Run Scraper (Watchlist)
+      - name: Run Amazon Scraper
         env:
-          AMAZON_TAG: ${{ secrets.AMAZON_TAG }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }} # Add this line
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
         run: python Github_lego_Amazon_watchlist.py
