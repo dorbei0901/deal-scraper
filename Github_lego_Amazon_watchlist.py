@@ -28,7 +28,7 @@ def load_watchlist(filename="legowatchlist.csv"):
     with open(filename, "r", encoding="utf-8") as file:
         for line in file:
             parts = line.strip().split(',')
-            if len(parts) == 2:
+            if len(parts) >= 2:
                 watchlist.append({"lego_number": parts[0].strip(), "asin": parts[1].strip()})
     return watchlist
 
@@ -60,13 +60,13 @@ def send_email_report(deals):
     </style>
     </head>
     <body>
-    <h2>Daily LEGO Watchlist Report</h2>
+    <h2>Daily LEGO Watchlist Report (via CCC)</h2>
     <table>
       <tr>
         <th>Product Name</th>
         <th>Number</th>
         <th>Current</th>
-        <th>Original</th>
+        <th>Highest (List)</th>
         <th>Discount</th>
         <th>Status Change</th>
         <th>Amazon Link</th>
@@ -92,7 +92,7 @@ def send_email_report(deals):
         <td>${deal.get('original_price', 0):.2f}</td>
         <td style="color: red; font-weight: bold;">{deal.get('discount', 0)}%</td>
         <td style="font-weight: bold;">{status}</td>
-        <td><a href="{deal.get('link', '#')}">View Deal</a></td>
+        <td><a href="{deal.get('link', '#')}">View on Amazon</a></td>
       </tr>
         """
         
@@ -117,10 +117,13 @@ def send_email_report(deals):
     except Exception as e:
         print(f"❌ Failed to send email: {e}")
 
-def scrape_direct_asin(session, lego_number, asin, amazon_tag=""):
-    url = f"https://www.amazon.ca/dp/{asin}"
-    affiliate_url = f"{url}?tag={amazon_tag}" if amazon_tag else url
-    print(f"🔍 Scraping Watchlist Item {lego_number} via ASIN: {url}")
+def scrape_camelcamelcamel(session, lego_number, asin, amazon_tag=""):
+    # Target the Canadian CCC site
+    url = f"https://ca.camelcamelcamel.com/product/{asin}"
+    # But route the final email link directly to Amazon.ca
+    affiliate_url = f"https://www.amazon.ca/dp/{asin}?tag={amazon_tag}" if amazon_tag else f"https://www.amazon.ca/dp/{asin}"
+    
+    print(f"🔍 Scraping CCC for Watchlist Item {lego_number} (ASIN: {asin})")
     
     max_retries = 3
     found_deal = None
@@ -129,54 +132,48 @@ def scrape_direct_asin(session, lego_number, asin, amazon_tag=""):
         try:
             response = session.get(url, timeout=15)
             
-            if response.status_code == 503 or "captcha" in response.url.lower():
-                print(f"⚠️ WAF Block triggered for {lego_number} on attempt {attempt + 1}. Waiting...")
+            # CCC uses Cloudflare. If we hit a block, wait and retry.
+            if response.status_code in [403, 503]:
+                print(f"⚠️ Cloudflare Block triggered on attempt {attempt + 1}. Waiting...")
                 time.sleep(random.uniform(5, 12)) 
                 continue
 
-            # CHANGED: Using Python's built-in html.parser instead of lxml
+            # Using Python's native parser to avoid 'lxml' missing errors
             soup = BeautifulSoup(response.content, "html.parser")
             
-            # Extract Title
-            title_tag = soup.find(id="productTitle")
+            title_tag = soup.find("title")
             if not title_tag:
-                print(f"⚠️ Title not found on attempt {attempt + 1}. Page may be blocked or layout changed.")
+                print(f"⚠️ Title not found on attempt {attempt + 1}. Retrying...")
                 time.sleep(random.uniform(4, 7))
                 continue
                 
-            title = title_tag.get_text(strip=True)
-            if " - " in title:
-                title = title.split(" - ")[0].strip()
+            # Clean up the CCC title string
+            title = title_tag.get_text(strip=True).split(" | ")[0].replace("Amazon.ca Price Tracker", "").strip()
 
             current_price = None
             original_price = None
             discount = 0.0
 
-            # Extract Current Price (Check multiple Amazon layout classes)
-            price_core = soup.find("span", class_="a-price aok-align-center priceToPay")
-            if not price_core:
-                price_core = soup.find("span", class_="a-price apexPriceToPay")
-            if not price_core:
-                price_core = soup.find("span", class_="a-price") 
-                
-            if price_core:
-                offscreen = price_core.find("span", class_="a-offscreen")
-                if offscreen:
-                    current_price = extract_price(offscreen.get_text(strip=True))
-
-            # Extract Original/List Price
-            basis_price_block = soup.find("span", class_="basisPrice")
-            if basis_price_block:
-                offscreen = basis_price_block.find("span", class_="a-offscreen")
-                if offscreen:
-                    original_price = extract_price(offscreen.get_text(strip=True))
-            elif soup.find('span', {'data-a-strike': 'true'}):
-                strike_tag = soup.find('span', {'data-a-strike': 'true'})
-                offscreen = strike_tag.find('span', class_='a-offscreen')
-                if offscreen:
-                    original_price = extract_price(offscreen.get_text(strip=True))
-                else:
-                    original_price = extract_price(strike_tag.get_text(strip=True))
+            # Find the pricing table row for "Amazon"
+            amazon_row = soup.find(lambda tag: tag.name == 'tr' and 'Amazon' in tag.get_text())
+            
+            if amazon_row:
+                # Find all dollar amounts in that row
+                prices = amazon_row.find_all(string=re.compile(r'\$\d+\.\d+'))
+                if prices:
+                    current_price = extract_price(prices[0])
+                if len(prices) >= 2:
+                    original_price = extract_price(prices[1]) # CCC tracks "Highest" which acts as MSRP
+                    
+            # Fallback to "3rd Party New" if Amazon native stock isn't found
+            if not current_price:
+                third_party_row = soup.find(lambda tag: tag.name == 'tr' and '3rd Party New' in tag.get_text())
+                if third_party_row:
+                    prices = third_party_row.find_all(string=re.compile(r'\$\d+\.\d+'))
+                    if prices:
+                        current_price = extract_price(prices[0])
+                        if len(prices) >= 2:
+                            original_price = extract_price(prices[1])
 
             if current_price is not None and original_price is None:
                 original_price = current_price
@@ -191,50 +188,51 @@ def scrape_direct_asin(session, lego_number, asin, amazon_tag=""):
                     "current_price": current_price,
                     "original_price": original_price,
                     "discount": discount,
-                    "link": affiliate_url,
+                    "link": affiliate_url, # Link routes to Amazon for easy purchasing
                     "asin": asin
                 }
-                print(f"✅ Found {lego_number}: {title[:40]}... | Price: ${current_price:.2f}")
+                print(f"✅ Found {lego_number} on CCC: {title[:35]}... | Price: ${current_price:.2f}")
                 break
+            else:
+                print(f"⚠️ No price found for {lego_number} on attempt {attempt + 1}.")
 
         except Exception as e:
             print(f"An error occurred on attempt {attempt + 1}: {e}")
             time.sleep(random.uniform(4, 8))
 
     if not found_deal:
-        print(f"❌ Item {lego_number} could not be extracted.")
+        print(f"❌ Item {lego_number} could not be extracted from CCC.")
         
     return found_deal
 
 def main():
-    print("🔎 Amazon LEGO Watchlist (MacOS + Googlebot Exploit Edition)")
+    print("🔎 Amazon LEGO Watchlist (CamelCamelCamel Exploit Edition)")
     
     amazon_tag = os.getenv('AMAZON_TAG', '')
     watchlist = load_watchlist()
     master_deal_list = []
     
-    # Initialize the session bypassing impersonate to explicitly set Googlebot headers
-    session = requests.Session()
+    # We use chrome116 to bypass CCC's Cloudflare protection smoothly
+    session = requests.Session(impersonate="chrome116")
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
-        "Referer": "https://www.google.com/",
+        "Referer": "https://ca.camelcamelcamel.com/",
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "cross-site",
+        "Sec-Fetch-Site": "same-origin",
         "Upgrade-Insecure-Requests": "1"
     })
 
-    print("🍪 Warming up session (Spoofing Googlebot)...")
+    print("🍪 Warming up session with CamelCamelCamel homepage...")
     try:
-        session.get("https://www.amazon.ca", timeout=15)
+        session.get("https://ca.camelcamelcamel.com/", timeout=15)
         time.sleep(random.uniform(2, 5))
     except Exception as e:
         print(f"⚠️ Homepage warmup failed: {e}")
     
     for item in watchlist:
-        deal = scrape_direct_asin(session=session, lego_number=item["lego_number"], asin=item["asin"], amazon_tag=amazon_tag)
+        deal = scrape_camelcamelcamel(session=session, lego_number=item["lego_number"], asin=item["asin"], amazon_tag=amazon_tag)
         if deal:
             master_deal_list.append(deal)
             
