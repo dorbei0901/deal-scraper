@@ -134,7 +134,8 @@ def scrape_direct_asin(session, lego_number, asin, amazon_tag=""):
                 time.sleep(random.uniform(5, 12)) 
                 continue
 
-            soup = BeautifulSoup(response.content, "lxml")
+            # CHANGED: Using Python's built-in html.parser instead of lxml
+            soup = BeautifulSoup(response.content, "html.parser")
             
             # Extract Title
             title_tag = soup.find(id="productTitle")
