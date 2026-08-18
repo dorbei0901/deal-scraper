@@ -165,7 +165,10 @@
         "title": "LEGO Star Wars Jango Fett Helmet 75408",
         "url": "https://www.costco.ca/p/-/lego-star-wars-jango-fett-helmet-75408/4000375982?langId=-24",
         "price": 79.99,
-        "availability": "INSTOCK"
+        "availability": "NOSTOCK",
+        "changes": [
+            "Availability changed: INSTOCK -> NOSTOCK"
+        ]
     },
     "2575402": {
         "title": "LEGO Star Wars: Revenge of the Sith ARC-170 Starfighter Spaceship 75402",
