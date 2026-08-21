@@ -141,10 +141,7 @@
         "title": "LEGO Art Hokusai \u2013 The Great Wave 31208",
         "url": "https://www.costco.ca/p/-/lego-art-hokusai-the-great-wave-31208/4000178379?langId=-24",
         "price": 209,
-        "availability": "INSTOCK",
-        "changes": [
-            "Availability changed: ERROR -> INSTOCK"
-        ]
+        "availability": "INSTOCK"
     },
     "1021984": {
         "title": "LEGO Icons Porsche 911",
