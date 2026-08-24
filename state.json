@@ -105,7 +105,10 @@
         "title": "LEGO Star Wars Mandalorian Fang Fighter vs. TIE Interceptor 75348",
         "url": "https://www.costco.ca/p/-/lego-star-wars-mandalorian-fang-fighter-vs-tie-interceptor-75348/4000180686",
         "price": 99.97,
-        "availability": "NOSTOCK"
+        "availability": "ERROR",
+        "changes": [
+            "Availability changed: NOSTOCK -> ERROR"
+        ]
     },
     "1596551": {
         "title": "LEGO Star Wars Darth Vader Helmet 75304",
