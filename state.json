@@ -117,10 +117,7 @@
         "title": "LEGO Star Wars Rebel U-Wing Starfighter 75399",
         "url": "https://www.costco.ca/p/-/lego-star-wars-rebel-u-wing-starfighter-75399/4000368234",
         "price": 79.99,
-        "availability": "NOSTOCK",
-        "changes": [
-            "Availability changed: INSTOCK -> NOSTOCK"
-        ]
+        "availability": "NOSTOCK"
     },
     "2375337": {
         "title": "LEGO Star Wars AT-TE Walker 75337",
