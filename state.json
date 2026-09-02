@@ -87,7 +87,10 @@
         "title": "LEGO Star Wars The Razor Crest 75447",
         "url": "https://www.costco.ca/p/-/lego-star-wars-the-razor-crest-75447/4201004570",
         "price": 169.99,
-        "availability": "NOSTOCK"
+        "availability": "INSTOCK",
+        "changes": [
+            "Availability changed: NOSTOCK -> INSTOCK"
+        ]
     },
     "2375350": {
         "title": "LEGO Star Wars Clone Commander Cody Helmet 75350",
