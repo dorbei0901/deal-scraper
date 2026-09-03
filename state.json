@@ -129,7 +129,10 @@
         "title": "LEGO Ideas River Steamboat 21356",
         "url": "https://www.costco.ca/p/-/lego-ideas-river-steamboat-21356/4000375835",
         "price": 349.99,
-        "availability": "NOSTOCK"
+        "availability": "INSTOCK",
+        "changes": [
+            "Availability changed: NOSTOCK -> INSTOCK"
+        ]
     },
     "2321330": {
         "title": "LEGO Ideas Home Alone 21330",
@@ -165,7 +168,10 @@
         "title": "LEGO Star Wars Jango Fett Helmet 75408",
         "url": "https://www.costco.ca/p/-/lego-star-wars-jango-fett-helmet-75408/4000375982?langId=-24",
         "price": 79.99,
-        "availability": "NOSTOCK"
+        "availability": "INSTOCK",
+        "changes": [
+            "Availability changed: NOSTOCK -> INSTOCK"
+        ]
     },
     "2575402": {
         "title": "LEGO Star Wars: Revenge of the Sith ARC-170 Starfighter Spaceship 75402",
