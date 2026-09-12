@@ -21,7 +21,10 @@
         "title": "LEGO Back to the Future Time Machine",
         "url": "https://www.costco.ca/p/-/lego-back-to-the-future-time-machine-10300/100981584",
         "price": 219.99,
-        "availability": "INSTOCK"
+        "availability": "NOSTOCK",
+        "changes": [
+            "Availability changed: INSTOCK -> NOSTOCK"
+        ]
     },
     "2621359": {
         "title": "LEGO Ideas Italian Riviera Building Set 21359",
