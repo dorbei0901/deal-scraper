@@ -99,7 +99,10 @@
         "title": "LEGO Star Wars: The Clone Wars Battle of Felucia Separatist MTT 75435",
         "url": "https://www.costco.ca/p/-/lego-star-wars-the-clone-wars-battle-of-felucia-separatist-mtt-75435/4000394100",
         "price": 179.99,
-        "availability": "INSTOCK"
+        "availability": "NOSTOCK",
+        "changes": [
+            "Availability changed: INSTOCK -> NOSTOCK"
+        ]
     },
     "2375348": {
         "title": "LEGO Star Wars Mandalorian Fang Fighter vs. TIE Interceptor 75348",
