@@ -45,10 +45,7 @@
         "title": "LEGO Architecture Paris \u2013 City of Love 21064",
         "url": "https://www.costco.ca/p/-/lego-architecture-paris-city-of-love-21064/4000426822",
         "price": 89.99,
-        "availability": "INSTOCK",
-        "changes": [
-            "Availability changed: NOSTOCK -> INSTOCK"
-        ]
+        "availability": "INSTOCK"
     },
     "2611372": {
         "title": "LEGO Icons Autumn Cottage Garden Building Set 11372",
