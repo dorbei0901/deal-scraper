@@ -99,10 +99,7 @@
         "title": "LEGO Star Wars: The Clone Wars Battle of Felucia Separatist MTT 75435",
         "url": "https://www.costco.ca/p/-/lego-star-wars-the-clone-wars-battle-of-felucia-separatist-mtt-75435/4000394100",
         "price": 179.99,
-        "availability": "NOSTOCK",
-        "changes": [
-            "Availability changed: INSTOCK -> NOSTOCK"
-        ]
+        "availability": "NOSTOCK"
     },
     "2375348": {
         "title": "LEGO Star Wars Mandalorian Fang Fighter vs. TIE Interceptor 75348",
@@ -150,10 +147,7 @@
         "title": "LEGO Icons Porsche 911",
         "url": "https://www.costco.ca/p/-/lego-icons-porsche-911-building-kit-10295-with-bonus-lego-creator-3-in-1-wild-animals-panda-family-31165/4000284565?langId=-24",
         "price": 119.99,
-        "availability": "INSTOCK",
-        "changes": [
-            "Availability changed: NOSTOCK -> INSTOCK"
-        ]
+        "availability": "INSTOCK"
     },
     "2575433": {
         "title": "LEGO Star Wars: Attack of the Clones Jango Fett's Starship 75433",
