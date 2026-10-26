@@ -271,7 +271,7 @@ def scrape_amazon_lego_curl(session, keyword="", min_discount_percent=30.0, min_
 def main():
     print("🔎 Amazon LEGO Discount Scraper (curl-cffi Edition - WAF Optimized)")
     
-    min_discount_percent = 20
+    min_discount_percent = 10
     min_original_price = 50
     amazon_tag = os.getenv('AMAZON_TAG', '')
 
