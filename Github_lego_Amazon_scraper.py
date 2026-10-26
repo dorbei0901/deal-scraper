@@ -109,8 +109,6 @@ def send_email_report(deals):
                 row_style = ' style="background-color: #e2e3e5; color: #6c757d;"' 
             elif status == "Price Changed":
                 row_style = ' style="background-color: #fff3cd;"' 
-            elif status == "Unchanged":
-                row_style = '' 
 
             html += f"""
           <tr{row_style}>
@@ -165,14 +163,15 @@ def scrape_amazon_lego_curl(session, keyword="", min_discount_percent=30.0, min_
         try:
             response = session.get(url, timeout=15)
             
-            if response.status_code == 503 or "captcha" in response.url.lower():
-                print(f"⚠️ WAF Block triggered on page {page_number}. Amazon is aggressively blocking the IP.")
+            if response.status_code == 503 or "captcha" in response.url.lower() or "validateCaptcha" in response.text:
+                print(f"⚠️ WAF Block / CAPTCHA triggered on page {page_number}. Amazon is blocking the IP.")
                 break
 
             soup = BeautifulSoup(response.content, "lxml")
             products = soup.find_all("div", {"data-component-type": "s-search-result"})
 
             if not products:
+                print(f"⚠️ Warning: No products found on page {page_number}. Content length: {len(response.text)}. Possible soft-block.")
                 break
 
             for item in products:
@@ -222,9 +221,6 @@ def scrape_amazon_lego_curl(session, keyword="", min_discount_percent=30.0, min_
                             original_price = extract_price(offscreen_span.get_text(strip=True))
                         else:
                              original_price = extract_price(strike_tag.get_text(strip=True))
-
-                    if current_price is not None and original_price is None:
-                        original_price = current_price
 
                     if current_price is not None and original_price is not None and original_price > 0 and original_price > current_price:
                         discount = round(((original_price - current_price) / original_price) * 100, 1)
@@ -278,7 +274,8 @@ def main():
     themes = load_lego_themes()
     master_deal_list = []
     
-    session = requests.Session(impersonate="chrome116")
+    # Use rolling "chrome" alias to ensure up-to-date TLS/HTTP2 fingerprints
+    session = requests.Session(impersonate="chrome")
     session.headers.update({
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-CA,en-US;q=0.9,en;q=0.8",
@@ -303,10 +300,10 @@ def main():
         print(f"{'='*50}")
         
         found_deals = scrape_amazon_lego_curl(session=session,
-                                              keyword=theme, 
-                                              min_discount_percent=min_discount_percent, 
-                                              min_original_price=min_original_price,
-                                              amazon_tag=amazon_tag)
+                                            keyword=theme, 
+                                            min_discount_percent=min_discount_percent, 
+                                            min_original_price=min_original_price,
+                                            amazon_tag=amazon_tag)
         if found_deals:
             master_deal_list.extend(found_deals)
             
