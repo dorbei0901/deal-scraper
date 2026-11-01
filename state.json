@@ -63,10 +63,7 @@
         "title": "LEGO Marvel Iron Man Mark 3",
         "url": "https://www.costco.ca/p/-/lego-marvel-iron-man-mark-3-collectors-edition-76344/4000426825",
         "price": 149.99,
-        "availability": "NOSTOCK",
-        "changes": [
-            "Availability changed: INSTOCK -> NOSTOCK"
-        ]
+        "availability": "NOSTOCK"
     },
     "2611375": {
         "title": "LEGO Icons Ferrari F2004 & Michael Schumacher Model",
