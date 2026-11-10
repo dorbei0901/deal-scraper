@@ -177,10 +177,7 @@
         "title": "LEGO Disney and Pixar \u2018Up' House 43217",
         "url": "https://www.costco.ca/p/-/lego-disney-and-pixar-up-house-43217/4000149667?langId=-24",
         "price": 69.99,
-        "availability": "NOSTOCK",
-        "changes": [
-            "Availability changed: INSTOCK -> NOSTOCK"
-        ]
+        "availability": "NOSTOCK"
     },
     "2521061": {
         "title": "LEGO Architecture Notre-Dame",
