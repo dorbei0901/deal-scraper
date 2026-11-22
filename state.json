@@ -159,10 +159,7 @@
         "title": "LEGO Star Wars The Mandalorian Helmet 75328",
         "url": "https://www.costco.ca/p/-/lego-star-wars-the-mandalorian-helmet-75328/4000186462?langId=-24",
         "price": 79.99,
-        "availability": "INSTOCK",
-        "changes": [
-            "Availability changed: NOSTOCK -> INSTOCK"
-        ]
+        "availability": "INSTOCK"
     },
     "2575408": {
         "title": "LEGO Star Wars Jango Fett Helmet 75408",
@@ -180,10 +177,7 @@
         "title": "LEGO Disney and Pixar \u2018Up' House 43217",
         "url": "https://www.costco.ca/p/-/lego-disney-and-pixar-up-house-43217/4000149667?langId=-24",
         "price": 69.99,
-        "availability": "INSTOCK",
-        "changes": [
-            "Availability changed: NOSTOCK -> INSTOCK"
-        ]
+        "availability": "INSTOCK"
     },
     "2521061": {
         "title": "LEGO Architecture Notre-Dame",
